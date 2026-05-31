@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/scbizu/jvj/internal/tape"
+	"github.com/scbizu/tape-go/internal/tape"
 )
 
 type recordingHandoffWriter struct {

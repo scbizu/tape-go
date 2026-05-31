@@ -3,7 +3,7 @@ package skills
 import (
 	"context"
 
-	"github.com/scbizu/jvj/internal/tape"
+	"github.com/scbizu/tape-go/internal/tape"
 )
 
 type HandoffResult struct {

@@ -4,11 +4,13 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/scbizu/jvj/internal/tape"
+	"github.com/scbizu/tape-go/internal/tape"
 )
 
-var ErrActiveSessionExists = errors.New("active session already exists")
-var ErrSessionNotFound = errors.New("session not found")
+var (
+	ErrActiveSessionExists = errors.New("active session already exists")
+	ErrSessionNotFound     = errors.New("session not found")
+)
 
 type Session struct {
 	ID       string
