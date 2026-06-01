@@ -4,7 +4,7 @@ package storage
 import (
 	"context"
 
-	"github.com/scbizu/tape-go/internal/tape/entry"
+	"github.com/scbizu/tape-go/pkg/tape/entry"
 )
 
 type TapeView struct {
@@ -26,6 +26,9 @@ type TapeStorage interface {
 	// 往事不堪回首 , 也许我们需要一个机制来定义某些记忆是我们不想记起来的
 	// Be fair to agents
 	// Mask(context.Context, SessionID, uint64) (TapeView, error)
+	//
+	// TapeStorage should also hold the storage of entries
+	EntryStorage
 }
 
 type SessionID string

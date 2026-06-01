@@ -1,4 +1,2 @@
-.alma-snapshots
-.docs/plans
-
 .worktrees/
+mise.local.toml
