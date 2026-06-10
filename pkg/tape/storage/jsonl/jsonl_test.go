@@ -2,10 +2,16 @@ package jsonl
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/scbizu/tape-go/pkg/tape/entry"
+	"github.com/scbizu/tape-go/pkg/tape/owner"
+	"github.com/scbizu/tape-go/pkg/tape/view"
+	"github.com/spf13/afero"
 )
 
 func TestReadLinesKeepsJSONLBoundaries(t *testing.T) {
@@ -18,7 +24,7 @@ func TestReadLinesKeepsJSONLBoundaries(t *testing.T) {
 		t.Fatalf("write test file: %v", err)
 	}
 
-	data, err := readLines(context.Background(), file, 1, int64(LINE_EOF))
+	data, err := readLines(context.Background(), afero.NewOsFs(), file, 1, int64(LINE_EOF))
 	if err != nil {
 		t.Fatalf("readLines to EOF: %v", err)
 	}
@@ -29,36 +35,28 @@ func TestReadLinesKeepsJSONLBoundaries(t *testing.T) {
 	}
 }
 
-func TestJSONLReadAcrossFilesStartsFromRequestedFile(t *testing.T) {
+func TestBuildJSONLIndex(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	f0 := filepath.Join(dir, "0.jsonl")
-	f1 := filepath.Join(dir, "1.jsonl")
-	f2 := filepath.Join(dir, "2.jsonl")
-
-	if err := os.WriteFile(f0, []byte("f0-l0\n"), 0o644); err != nil {
-		t.Fatalf("write file 0: %v", err)
-	}
-	if err := os.WriteFile(f1, []byte("f1-l0\nf1-l1\n"), 0o644); err != nil {
-		t.Fatalf("write file 1: %v", err)
-	}
-	if err := os.WriteFile(f2, []byte("f2-l0\nf2-l1\n"), 0o644); err != nil {
-		t.Fatalf("write file 2: %v", err)
+	file := filepath.Join(dir, "entries.jsonl")
+	content := []byte("{\"Seq\":7}\n{\"Seq\":9}\n{\"Seq\":13}\n")
+	if err := os.WriteFile(file, content, 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
 	}
 
-	store := &JSONL{
-		files: []string{f0, f1, f2},
-	}
-
-	data, err := store.Read(context.Background(), fIndex{fileIndex: 1, lineIndex: 1}, fIndex{fileIndex: 2, lineIndex: 0})
+	index, err := buildJSONLIndex(afero.NewOsFs(), file)
 	if err != nil {
-		t.Fatalf("read across files: %v", err)
+		t.Fatalf("buildJSONLIndex: %v", err)
 	}
-
-	want := "f1-l1\nf2-l0\n"
-	if string(data) != want {
-		t.Fatalf("Read mismatch:\nwant %q\ngot  %q", want, string(data))
+	if index.Path != file {
+		t.Fatalf("path mismatch: want %q, got %q", file, index.Path)
+	}
+	if index.Scope.SeqS != 7 || index.Scope.SeqE != 13 {
+		t.Fatalf("scope mismatch: want [7,13], got [%d,%d]", index.Scope.SeqS, index.Scope.SeqE)
+	}
+	if index.Entries != 3 {
+		t.Fatalf("entries mismatch: want 3, got %d", index.Entries)
 	}
 }
 
@@ -70,21 +68,23 @@ func TestJSONLInitCreatesSessionFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewJSONLStorage: %v", err)
 	}
+	ctx := owner.WithOwnerId(context.Background(), "owner-a")
 
-	if err := store.Init(context.Background()); err != nil {
+	if err := store.Init(ctx); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 
-	if len(store.files) != 1 {
-		t.Fatalf("files len mismatch: want 1, got %d", len(store.files))
+	state := mustOwnerState(t, store, "owner-a")
+	if len(state.indexes) != 1 {
+		t.Fatalf("indexes len mismatch: want 1, got %d", len(state.indexes))
 	}
 
-	gotFile := store.files[0]
+	gotFile := state.indexes[0].Path
 	if _, err := os.Stat(gotFile); err != nil {
 		t.Fatalf("stat created file: %v", err)
 	}
 
-	wantDir := filepath.Join(dir, "session-a")
+	wantDir := filepath.Join(dir, "owner-a", "session-a")
 	if _, err := os.Stat(wantDir); err != nil {
 		t.Fatalf("stat session dir: %v", err)
 	}
@@ -104,15 +104,261 @@ func TestJSONLInitIsIdempotentForSameInstance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewJSONLStorage: %v", err)
 	}
+	ctx := owner.WithOwnerId(context.Background(), "owner-a")
 
-	if err := store.Init(context.Background()); err != nil {
+	if err := store.Init(ctx); err != nil {
 		t.Fatalf("first Init: %v", err)
 	}
-	if err := store.Init(context.Background()); err != nil {
+	if err := store.Init(ctx); err != nil {
 		t.Fatalf("second Init: %v", err)
 	}
 
-	if len(store.files) != 1 {
-		t.Fatalf("files len mismatch after repeated Init: want 1, got %d", len(store.files))
+	state := mustOwnerState(t, store, "owner-a")
+	if len(state.indexes) != 1 {
+		t.Fatalf("indexes len mismatch after repeated Init: want 1, got %d", len(state.indexes))
 	}
+}
+
+func TestJSONLUsesEmbeddedAferoFS(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewJSONLStorage("session-memory", "/tapes")
+	if err != nil {
+		t.Fatalf("NewJSONLStorage: %v", err)
+	}
+	store.Fs = afero.NewMemMapFs()
+	ctx := owner.WithOwnerId(context.Background(), "owner-a")
+
+	if err := store.Init(ctx); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	want := entry.Entry{}
+	if err := store.Store(ctx, want); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+
+	state := mustOwnerState(t, store, "owner-a")
+	data, err := afero.ReadFile(store.Fs, state.indexes[0].Path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+
+	var got entry.Entry
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("decode stored entry: %v", err)
+	}
+}
+
+func TestJSONLSeparatesOwnerState(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewJSONLStorage("session-shared", "/tapes")
+	if err != nil {
+		t.Fatalf("NewJSONLStorage: %v", err)
+	}
+	store.Fs = afero.NewMemMapFs()
+
+	ctxA := owner.WithOwnerId(context.Background(), "owner-a")
+	ctxB := owner.WithOwnerId(context.Background(), "owner-b")
+	for _, ctx := range []context.Context{ctxA, ctxB} {
+		if err := store.Init(ctx); err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+	}
+
+	if err := store.Store(ctxA, entry.NewEntry(entry.WithEntryOwner("owner-a"))); err != nil {
+		t.Fatalf("Store owner-a: %v", err)
+	}
+	if err := store.Store(ctxB, entry.NewEntry(entry.WithEntryOwner("owner-b"))); err != nil {
+		t.Fatalf("Store owner-b: %v", err)
+	}
+
+	for _, tc := range []struct {
+		ctx     context.Context
+		ownerID string
+	}{
+		{ctx: ctxA, ownerID: "owner-a"},
+		{ctx: ctxB, ownerID: "owner-b"},
+	} {
+		state := mustOwnerState(t, store, tc.ownerID)
+		data, err := afero.ReadFile(store.Fs, state.indexes[0].Path)
+		if err != nil {
+			t.Fatalf("Read %s: %v", tc.ownerID, err)
+		}
+		var got entry.Entry
+		if err := json.Unmarshal(data, &got); err != nil {
+			t.Fatalf("decode %s entry: %v", tc.ownerID, err)
+		}
+		if got.Owner != tc.ownerID {
+			t.Fatalf("owner mismatch: want %q, got %q", tc.ownerID, got.Owner)
+		}
+	}
+
+	stateA := mustOwnerState(t, store, "owner-a")
+	stateB := mustOwnerState(t, store, "owner-b")
+	if stateA.indexes[0].Path == stateB.indexes[0].Path {
+		t.Fatalf("owners share the same JSONL file: %q", stateA.indexes[0].Path)
+	}
+}
+
+func TestJSONLGetReturnsLastEntryID(t *testing.T) {
+	t.Parallel()
+
+	fs := afero.NewMemMapFs()
+	ctx := owner.WithOwnerId(context.Background(), "owner-a")
+	store, err := NewJSONLStorage("session-a", "/tapes")
+	if err != nil {
+		t.Fatalf("NewJSONLStorage: %v", err)
+	}
+	store.Fs = fs
+
+	if err := store.Init(ctx); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	for _, id := range []uint64{7, 13} {
+		if err := store.Store(ctx, entry.NewEntry(entry.WithEntryId(id))); err != nil {
+			t.Fatalf("Store entry %d: %v", id, err)
+		}
+	}
+
+	got, err := store.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Scope.SeqE != 13 {
+		t.Fatalf("scope end mismatch: want 13, got %d", got.Scope.SeqE)
+	}
+	state := mustOwnerState(t, store, "owner-a")
+	if len(state.indexes) != 1 {
+		t.Fatalf("indexes len mismatch: want 1, got %d", len(state.indexes))
+	}
+	index := state.indexes[0]
+	if index.Scope.SeqS != 7 || index.Scope.SeqE != 13 {
+		t.Fatalf("index scope mismatch: want [7,13], got [%d,%d]", index.Scope.SeqS, index.Scope.SeqE)
+	}
+	if index.Entries != 2 {
+		t.Fatalf("index entries mismatch: want 2, got %d", index.Entries)
+	}
+
+	reloaded, err := NewJSONLStorage("session-a", "/tapes")
+	if err != nil {
+		t.Fatalf("NewJSONLStorage reload: %v", err)
+	}
+	reloaded.Fs = fs
+	if err := reloaded.Init(ctx); err != nil {
+		t.Fatalf("reload Init: %v", err)
+	}
+
+	got, err = reloaded.Get(ctx)
+	if err != nil {
+		t.Fatalf("reload Get: %v", err)
+	}
+	if got.Scope.SeqE != 13 {
+		t.Fatalf("reloaded scope end mismatch: want 13, got %d", got.Scope.SeqE)
+	}
+}
+
+func TestJSONLRangeAcrossSparseIndexes(t *testing.T) {
+	t.Parallel()
+
+	fs := afero.NewMemMapFs()
+	files := []struct {
+		path    string
+		entries []entry.Entry
+	}{
+		{
+			path: "/tapes/owner-a/session-a/0.jsonl",
+			entries: []entry.Entry{
+				entry.NewEntry(entry.WithEntryId(1)),
+				entry.NewEntry(entry.WithEntryId(2)),
+			},
+		},
+		{
+			path: "/tapes/owner-a/session-a/1.jsonl",
+			entries: []entry.Entry{
+				entry.NewEntry(entry.WithEntryId(3)),
+				entry.NewEntry(entry.WithEntryId(5)),
+			},
+		},
+		{
+			path: "/tapes/owner-a/session-a/2.jsonl",
+			entries: []entry.Entry{
+				entry.NewEntry(entry.WithEntryId(7)),
+				entry.NewEntry(entry.WithEntryId(8)),
+				entry.NewEntry(entry.WithEntryId(10)),
+			},
+		},
+	}
+
+	indexes := make([]JSONLIndex, 0, len(files))
+	for _, file := range files {
+		if err := fs.MkdirAll(filepath.Dir(file.path), 0o700); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		fd, err := fs.Create(file.path)
+		if err != nil {
+			t.Fatalf("Create %s: %v", file.path, err)
+		}
+		encoder := json.NewEncoder(fd)
+		for _, e := range file.entries {
+			if err := encoder.Encode(e); err != nil {
+				fd.Close()
+				t.Fatalf("Encode %s: %v", file.path, err)
+			}
+		}
+		if err := fd.Close(); err != nil {
+			t.Fatalf("Close %s: %v", file.path, err)
+		}
+		index, err := buildJSONLIndex(fs, file.path)
+		if err != nil {
+			t.Fatalf("buildJSONLIndex %s: %v", file.path, err)
+		}
+		indexes = append(indexes, index)
+	}
+
+	store := &JSONL{Fs: fs, sessionId: "session-a"}
+	store.Owners.Store("owner-a", &ownerJSONL{
+		sessionId: "session-a",
+		indexes:   indexes,
+	})
+	ctx := owner.WithOwnerId(context.Background(), "owner-a")
+
+	got, err := store.Range(ctx, view.EntryRange{SeqS: 3, SeqE: 8})
+	if err != nil {
+		t.Fatalf("Range: %v", err)
+	}
+	if got.Scope != (view.EntryRange{SeqS: 3, SeqE: 8}) {
+		t.Fatalf("scope mismatch: got %+v", got.Scope)
+	}
+	wantIDs := []uint64{3, 5, 7}
+	if len(got.Raw) != len(wantIDs) {
+		t.Fatalf("entries len mismatch: want %d, got %d", len(wantIDs), len(got.Raw))
+	}
+	for i, wantID := range wantIDs {
+		if got.Raw[i].GetID() != wantID {
+			t.Fatalf("entry %d mismatch: want %d, got %d", i, wantID, got.Raw[i].GetID())
+		}
+	}
+}
+
+func TestJSONLRangeRejectsInvalidRange(t *testing.T) {
+	t.Parallel()
+
+	store := &JSONL{Fs: afero.NewMemMapFs(), sessionId: "session-a"}
+	store.Owners.Store("owner-a", &ownerJSONL{sessionId: "session-a"})
+	ctx := owner.WithOwnerId(context.Background(), "owner-a")
+
+	if _, err := store.Range(ctx, view.EntryRange{SeqS: 8, SeqE: 3}); err == nil {
+		t.Fatal("Range invalid range: want error, got nil")
+	}
+}
+
+func mustOwnerState(t *testing.T, store *JSONL, ownerID string) *ownerJSONL {
+	t.Helper()
+	value, ok := store.Owners.Load(ownerID)
+	if !ok {
+		t.Fatalf("owner state %q not found", ownerID)
+	}
+	return value.(*ownerJSONL)
 }

@@ -92,5 +92,3 @@ type CustomEntry struct {
 	Entry
 	Extensions map[string]any
 }
-
-type EntryView struct{}

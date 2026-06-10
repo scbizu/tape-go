@@ -9,12 +9,15 @@ type AnchorKind uint32
 
 const (
 	AnchorKindHandoff AnchorKind = iota + 1
+	AnchorKindCustom
 )
 
 func (ak AnchorKind) String() string {
 	switch ak {
 	case AnchorKindHandoff:
 		return "anchor:handoff"
+	case AnchorKindCustom:
+		return "anchor:custom"
 	}
 	panic(fmt.Sprintf("unknown anchor kind: %d", ak))
 }
@@ -23,4 +26,11 @@ type Anchor struct {
 	Entry
 	AnchorKind
 	Ext json.RawMessage
+}
+
+func NewAnchor(
+	seq uint64,
+	owner string,
+	ext json.RawMessage,
+) {
 }

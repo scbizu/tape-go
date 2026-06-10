@@ -1,0 +1,32 @@
+// Package view is the view assembler of tape
+package view
+
+import (
+	"github.com/scbizu/tape-go/pkg/tape/entry"
+)
+
+type EntryRange struct {
+	SeqS uint64
+	SeqE uint64
+}
+
+// EntryView describes a scoped entry view assembler
+type EntryView struct {
+	SessionId string
+	Owner     string
+	// Scope is the entry range index
+	// Technically, [SeqS,SeqE)
+	Scope EntryRange
+
+	Raw []entry.Entry
+	// Optional . If we need to integrate with some semantic search
+	Summary string
+}
+
+// TapeView is a special view assemble without entry raw data.
+// It describes the metadata info about the tape itself
+type TapeView struct {
+	SessionID string
+	Owner     string
+	Scope     EntryRange
+}

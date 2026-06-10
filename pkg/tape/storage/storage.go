@@ -5,23 +5,19 @@ import (
 	"context"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
+	"github.com/scbizu/tape-go/pkg/tape/view"
 )
-
-type TapeView struct {
-	SessionID      string
-	HeadAt, TailAt uint64
-}
 
 type EntryStorage interface {
 	Store(context.Context, entry.Entry) error
-	Range(context.Context, Range) ([]entry.EntryView, error)
+	Range(context.Context, view.EntryRange) (view.EntryView, error)
 	// Search is a more abstracted `Range` , maybe for embedding search
-	Search(context.Context, ...SearchBy) ([]entry.EntryView, error)
+	Search(context.Context, ...SearchBy) (view.EntryView, error)
 }
 
 type TapeStorage interface {
 	Init(context.Context) error
-	Get(context.Context) (TapeView, error)
+	Get(context.Context) (view.TapeView, error)
 	// TODO: Mask marks the time-period from a tape as low-priority
 	// 往事不堪回首 , 也许我们需要一个机制来定义某些记忆是我们不想记起来的
 	// Be fair to agents
@@ -33,13 +29,15 @@ type TapeStorage interface {
 
 type SessionID string
 
-type Range struct {
-	Start uint64
-	End   uint64
-}
-
 type SearchOption struct {
-	viewAssembler Range
+	eId            string
+	semanticPrompt string
 }
 
 type SearchBy func(*SearchOption)
+
+func WithEntryId(eId string) SearchBy {
+	return func(so *SearchOption) {
+		so.eId = eId
+	}
+}

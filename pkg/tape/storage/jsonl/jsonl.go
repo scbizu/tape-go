@@ -11,13 +11,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
+	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
+	"github.com/scbizu/tape-go/pkg/tape/view"
+	"github.com/spf13/afero"
 )
 
 var _ storage.TapeStorage = (*JSONL)(nil)
@@ -31,102 +33,39 @@ func NewJSONLStorage(sessionId string, lp string) (*JSONL, error) {
 		return nil, fmt.Errorf("jsonl: bad filepath: %w", err)
 	}
 	return &JSONL{
+		Fs:              afero.NewOsFs(),
 		localPathPrefix: abs,
 		sessionId:       sessionId,
-		Mutex:           &sync.Mutex{},
 	}, nil
 }
 
-// JSONLIndex is a range-able index designed for JSONL
-// Rather than keep all entries in the same file
-// `JSONLIndex` uses `readline()` to quickly read file blocks by file blocks.
-//
-//	such as `F{HASH_1}:L1 ~ F{HASH_1}L20` or `F{HASH_1}:L1023 ~ (F{HASH_1}:EOF) ~ F{HASH_2}:L2`
+// JSONLIndex is a sparse index that maps one JSONL file to its entry sequence range.
 type JSONLIndex struct {
-	indexHash string
-	start     fIndex
-	end       fIndex
+	Path    string
+	Scope   view.EntryRange
+	Entries uint64
 }
 
-type fIndex struct {
-	fileIndex uint64
-	lineIndex uint32
-}
-
-func (fi fIndex) String() string {
-	return fmt.Sprintf("F%d:L%d", fi.fileIndex, fi.lineIndex)
-}
-
-func NewIndex(hash string) JSONLIndex {
-	if hash == "" {
-		hash = uuid.NewString()
-	}
-	return JSONLIndex{
-		indexHash: hash,
-	}
+type ownerJSONL struct {
+	sync.RWMutex
+	sessionId   string
+	lastEntryId uint64
+	indexes     []JSONLIndex
 }
 
 type JSONL struct {
-	*sync.Mutex
+	afero.Fs
 
-	sessionId       string
+	Owners          sync.Map // OwnerId -> *ownerJSONL
 	localPathPrefix string
-	// in order to keep better r/w
-	// we split the single session into different files
-	files []string
-
-	index JSONLIndex
+	sessionId       string
 }
 
 var LINE_EOF = -1
 
-func (j *JSONL) Read(ctx context.Context, fi1, fi2 fIndex) ([]byte, error) {
-	if fi1.fileIndex >= uint64(len(j.files)) || fi2.fileIndex >= uint64(len(j.files)) {
-		return nil, fmt.Errorf("read: file index out of range")
-	}
-	if fi1.fileIndex > fi2.fileIndex {
-		return nil, fmt.Errorf("read: invalid range %s -> %s", fi1, fi2)
-	}
-	if fi1.fileIndex == fi2.fileIndex && fi1.lineIndex > fi2.lineIndex {
-		return nil, fmt.Errorf("read: invalid range %s -> %s", fi1, fi2)
-	}
-	if fi1.fileIndex == fi2.fileIndex {
-		return readLines(
-			ctx,
-			j.files[fi1.fileIndex],
-			int64(fi1.lineIndex),
-			int64(fi2.lineIndex),
-		)
-	}
-	buf := bytes.NewBuffer(nil)
-	for i := fi1.fileIndex; i <= fi2.fileIndex; i++ {
-		start := int64(0)
-		end := int64(LINE_EOF)
-		if i == fi1.fileIndex {
-			start = int64(fi1.lineIndex)
-		}
-		if i == fi2.fileIndex {
-			end = int64(fi2.lineIndex)
-		}
-		fd, err := readLines(
-			ctx,
-			j.files[i],
-			start,
-			end,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("read: %w", err)
-		}
-		if _, err = buf.Write(fd); err != nil {
-			return nil, fmt.Errorf("read: %w", err)
-		}
-	}
-	return buf.Bytes(), nil
-}
-
 // readLines reads file's [l1:l2] lines
-func readLines(_ context.Context, f string, l1, l2 int64) ([]byte, error) {
-	fd, err := os.Open(f)
+func readLines(_ context.Context, fs afero.Fs, f string, l1, l2 int64) ([]byte, error) {
+	fd, err := fs.Open(f)
 	if err != nil {
 		return nil, fmt.Errorf("readLines: %w", err)
 	}
@@ -160,31 +99,33 @@ func readLines(_ context.Context, f string, l1, l2 int64) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// func (j *JSONL) updateIndex(index JSONLIndex) {
-// 	j.Mutex.Lock()
-// 	defer j.Mutex.Unlock()
-// 	j.index = index
-// }
-
 // Init a JSONL or load existing JSONL storage
-// Filepath must be like: {localPathPrefix}/{sessionId}/{FILES}
+// Filepath must be like: {localPathPrefix}/{owner}/{sessionId}/{FILES}
 func (j *JSONL) Init(
 	ctx context.Context,
 ) error {
+	owr, state, err := j.ownerState(ctx, true)
+	if err != nil {
+		return err
+	}
+	state.Lock()
+	defer state.Unlock()
+
 	path := filepath.Join(
 		j.localPathPrefix,
-		string(j.sessionId),
+		owr,
+		state.sessionId,
 	)
-	info, err := os.Stat(path)
+	info, err := j.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			if err := os.MkdirAll(
+			if err := j.MkdirAll(
 				path,
 				0o700,
 			); err != nil {
 				return fmt.Errorf("jsonl: init: %w", err)
 			}
-			info, err = os.Stat(path)
+			info, err = j.Stat(path)
 			if err != nil {
 				return fmt.Errorf("jsonl: stat: %w", err)
 			}
@@ -196,9 +137,9 @@ func (j *JSONL) Init(
 		hash := fmt.Sprintf("%d%d%d", time.Now().Year(), time.Now().Month(), time.Now().Day())
 		f := fmt.Sprintf("%s_0.jsonl", hash)
 		ff := filepath.Join(path, f)
-		if _, err := os.Stat(ff); err != nil {
+		if _, err := j.Stat(ff); err != nil {
 			if os.IsNotExist(err) {
-				fd, ferr := os.OpenFile(
+				fd, ferr := j.OpenFile(
 					// create the first index
 					ff,
 					os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644,
@@ -211,9 +152,24 @@ func (j *JSONL) Init(
 				return fmt.Errorf("json: stat file: %w", err)
 			}
 		}
-		// j.updateIndex(NewIndex(hash))
-		if !slices.Contains(j.files, ff) {
-			j.files = append(j.files, ff)
+		dirEntries, err := afero.ReadDir(j.Fs, path)
+		if err != nil {
+			return fmt.Errorf("jsonl: read session directory: %w", err)
+		}
+		indexes := make([]JSONLIndex, 0, len(dirEntries))
+		for _, dirEntry := range dirEntries {
+			if dirEntry.IsDir() || !strings.HasSuffix(dirEntry.Name(), ".jsonl") {
+				continue
+			}
+			index, err := buildJSONLIndex(j.Fs, filepath.Join(path, dirEntry.Name()))
+			if err != nil {
+				return fmt.Errorf("jsonl: build index: %w", err)
+			}
+			indexes = append(indexes, index)
+		}
+		state.indexes = indexes
+		if len(indexes) > 0 {
+			state.lastEntryId = indexes[len(indexes)-1].Scope.SeqE
 		}
 	}
 	return nil
@@ -221,10 +177,20 @@ func (j *JSONL) Init(
 
 func (j *JSONL) Get(
 	ctx context.Context,
-) (storage.TapeView, error) {
-	return storage.TapeView{
-		HeadAt:    0,
-		SessionID: j.sessionId,
+) (view.TapeView, error) {
+	owr, state, err := j.ownerState(ctx, false)
+	if err != nil {
+		return view.TapeView{}, err
+	}
+	state.RLock()
+	defer state.RUnlock()
+
+	return view.TapeView{
+		SessionID: state.sessionId,
+		Owner:     owr,
+		Scope: view.EntryRange{
+			SeqE: state.lastEntryId,
+		},
 	}, nil
 }
 
@@ -232,13 +198,19 @@ func (j *JSONL) Store(
 	ctx context.Context,
 	e entry.Entry,
 ) error {
-	if len(j.files) == 0 {
-		return errors.New("jsonl: no files to store")
+	_, state, err := j.ownerState(ctx, false)
+	if err != nil {
+		return err
 	}
-	// files are always append, so we just need to get the last file handler
-	crtFile := j.files[len(j.files)-1]
+	state.Lock()
+	defer state.Unlock()
+
+	if len(state.indexes) == 0 {
+		return errors.New("jsonl: no index to store")
+	}
+	index := &state.indexes[len(state.indexes)-1]
 	// append e to the file
-	fd, err := os.OpenFile(crtFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	fd, err := j.OpenFile(index.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return fmt.Errorf("jsonl: open file: %w", err)
 	}
@@ -246,21 +218,136 @@ func (j *JSONL) Store(
 	if err := json.NewEncoder(fd).Encode(e); err != nil {
 		return fmt.Errorf("jsonl: encodes entry to storage failed: %w", err)
 	}
+	if index.Entries == 0 {
+		index.Scope.SeqS = e.GetID()
+	}
+	index.Scope.SeqE = e.GetID()
+	index.Entries++
+	state.lastEntryId = e.GetID()
 	return nil
+}
+
+func buildJSONLIndex(fs afero.Fs, path string) (JSONLIndex, error) {
+	fd, err := fs.Open(path)
+	if err != nil {
+		return JSONLIndex{}, err
+	}
+	defer fd.Close()
+
+	index := JSONLIndex{Path: path}
+	decoder := json.NewDecoder(fd)
+	for {
+		var e entry.Entry
+		if err := decoder.Decode(&e); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return JSONLIndex{}, fmt.Errorf("decode %s: %w", path, err)
+		}
+		if index.Entries == 0 {
+			index.Scope.SeqS = e.GetID()
+		}
+		index.Scope.SeqE = e.GetID()
+		index.Entries++
+	}
+	return index, nil
+}
+
+func (j *JSONL) ownerState(ctx context.Context, create bool) (string, *ownerJSONL, error) {
+	ownerID, err := owner.GetOwnerId(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+
+	if state, ok := j.Owners.Load(ownerID); ok {
+		return ownerID, state.(*ownerJSONL), nil
+	}
+	if !create {
+		return "", nil, fmt.Errorf("jsonl: owner %q is not initialized", ownerID)
+	}
+
+	state, _ := j.Owners.LoadOrStore(ownerID, &ownerJSONL{
+		sessionId: j.sessionId,
+	})
+	return ownerID, state.(*ownerJSONL), nil
 }
 
 func (j *JSONL) Range(
 	ctx context.Context,
-	r storage.Range,
-) ([]entry.EntryView, error) {
-	var evs []entry.EntryView
-	return evs, nil
+	r view.EntryRange,
+) (view.EntryView, error) {
+	if r.SeqS > r.SeqE {
+		return view.EntryView{}, fmt.Errorf(
+			"jsonl: invalid range [%d,%d)",
+			r.SeqS,
+			r.SeqE,
+		)
+	}
+	owr, state, err := j.ownerState(ctx, false)
+	if err != nil {
+		return view.EntryView{}, fmt.Errorf("jsonl: %w", err)
+	}
+	state.RLock()
+	defer state.RUnlock()
+
+	v := view.EntryView{
+		SessionId: j.sessionId,
+		Owner:     owr,
+		Scope:     r,
+	}
+	if r.SeqS == r.SeqE {
+		return v, nil
+	}
+
+	for _, index := range state.indexes {
+		if index.Entries == 0 ||
+			index.Scope.SeqE < r.SeqS ||
+			index.Scope.SeqS >= r.SeqE {
+			continue
+		}
+		entries, err := j.readEntriesInRange(ctx, index.Path, r)
+		if err != nil {
+			return view.EntryView{}, fmt.Errorf("jsonl: range: %w", err)
+		}
+		v.Raw = append(v.Raw, entries...)
+	}
+	return v, nil
+}
+
+func (j *JSONL) readEntriesInRange(
+	ctx context.Context,
+	path string,
+	r view.EntryRange,
+) ([]entry.Entry, error) {
+	fd, err := j.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer fd.Close()
+
+	var entries []entry.Entry
+	decoder := json.NewDecoder(fd)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		var e entry.Entry
+		if err := decoder.Decode(&e); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("decode %s: %w", path, err)
+		}
+		if e.GetID() >= r.SeqS && e.GetID() < r.SeqE {
+			entries = append(entries, e)
+		}
+	}
+	return entries, nil
 }
 
 func (j *JSONL) Search(
 	ctx context.Context,
 	opts ...storage.SearchBy,
-) ([]entry.EntryView, error) {
-	var evs []entry.EntryView
-	return evs, nil
+) (view.EntryView, error) {
+	return view.EntryView{}, errors.New("jsonl: do not support semantic search for now")
 }
