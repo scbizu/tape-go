@@ -58,7 +58,7 @@ func WithEntryOwner(owner string) EntryOption {
 	}
 }
 
-func WithEntryId(id uint64) EntryOption {
+func WithEntryID(id uint64) EntryOption {
 	return func(e *Entry) {
 		e.Seq = id
 	}

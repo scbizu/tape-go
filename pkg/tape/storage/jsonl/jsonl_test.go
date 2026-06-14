@@ -217,7 +217,7 @@ func TestJSONLGetReturnsLastEntryID(t *testing.T) {
 		t.Fatalf("Init: %v", err)
 	}
 	for _, id := range []uint64{7, 13} {
-		if err := store.Store(ctx, entry.NewEntry(entry.WithEntryId(id))); err != nil {
+		if err := store.Store(ctx, entry.NewEntry(entry.WithEntryID(id))); err != nil {
 			t.Fatalf("Store entry %d: %v", id, err)
 		}
 	}
@@ -270,23 +270,23 @@ func TestJSONLRangeAcrossSparseIndexes(t *testing.T) {
 		{
 			path: "/tapes/owner-a/session-a/0.jsonl",
 			entries: []entry.Entry{
-				entry.NewEntry(entry.WithEntryId(1)),
-				entry.NewEntry(entry.WithEntryId(2)),
+				entry.NewEntry(entry.WithEntryID(1)),
+				entry.NewEntry(entry.WithEntryID(2)),
 			},
 		},
 		{
 			path: "/tapes/owner-a/session-a/1.jsonl",
 			entries: []entry.Entry{
-				entry.NewEntry(entry.WithEntryId(3)),
-				entry.NewEntry(entry.WithEntryId(5)),
+				entry.NewEntry(entry.WithEntryID(3)),
+				entry.NewEntry(entry.WithEntryID(5)),
 			},
 		},
 		{
 			path: "/tapes/owner-a/session-a/2.jsonl",
 			entries: []entry.Entry{
-				entry.NewEntry(entry.WithEntryId(7)),
-				entry.NewEntry(entry.WithEntryId(8)),
-				entry.NewEntry(entry.WithEntryId(10)),
+				entry.NewEntry(entry.WithEntryID(7)),
+				entry.NewEntry(entry.WithEntryID(8)),
+				entry.NewEntry(entry.WithEntryID(10)),
 			},
 		},
 	}
