@@ -2,6 +2,8 @@
 package view
 
 import (
+	"encoding/json"
+
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 )
 
@@ -21,6 +23,10 @@ type EntryView struct {
 	Raw []entry.Entry
 	// Optional . If we need to integrate with some semantic search
 	Summary string
+}
+
+func (ev EntryView) MarshalJSON() ([]byte, error) {
+	return json.Marshal(ev.Raw)
 }
 
 // TapeView is a special view assemble without entry raw data.

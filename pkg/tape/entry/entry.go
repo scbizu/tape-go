@@ -1,5 +1,7 @@
 package entry
 
+import "sync/atomic"
+
 type EntryKind string
 
 const (
@@ -62,6 +64,10 @@ func WithEntryID(id uint64) EntryOption {
 	return func(e *Entry) {
 		e.Seq = id
 	}
+}
+
+func NextEntryID(old uint64) uint64 {
+	return atomic.AddUint64(&old, +1)
 }
 
 type Entry struct {

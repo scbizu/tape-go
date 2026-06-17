@@ -3,13 +3,16 @@ package agent
 
 import (
 	"context"
+	"io"
 )
 
 // AgentIO is the agent's IO stream
 // - fs
 // - network
 // - tape
-type AgentIO interface{}
+type AgentIO interface {
+	io.ReadWriteCloser
+}
 
 type AgentRuntime interface {
 	// Read reads in background for the next context window
