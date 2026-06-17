@@ -10,32 +10,18 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
-// HandoffAnchor describes the payload carried by an anchor:handoff entry.
-//
-// Tape exposes an entryView as the sliding window that an agent can currently
-// work with. When that window grows too large, the agent or an upper layer can
-// summarize the current entryView, write a handoff anchor for the covered range,
-// archive the older entries, and then reset the sliding window after the anchor.
-//
-// Summary is the compact memory of the archived window. SeqRange records the
-// original entries covered by that summary so a future agent can look back into
-// the archive when the summary is not enough.
-type HandoffAnchor struct {
-	Summary  string
-	SeqRange view.EntryRange
-}
-
-type HandOffOption func(*HandoffAnchor)
+type HandOffOption func(*entry.HandoffAnchor)
 
 func WithHandoffSummary(summary string) HandOffOption {
-	return func(anchor *HandoffAnchor) {
+	return func(anchor *entry.HandoffAnchor) {
 		anchor.Summary = summary
 	}
 }
 
 func WithHandoffSeqRange(r view.EntryRange) HandOffOption {
-	return func(anchor *HandoffAnchor) {
-		anchor.SeqRange = r
+	return func(anchor *entry.HandoffAnchor) {
+		anchor.SeqS = r.SeqS
+		anchor.SeqE = r.SeqE
 	}
 }
 
@@ -59,24 +45,22 @@ func (t *Tape) HandOff(
 	}
 
 	anchorSeq := entry.NextEntryID(tv.Scope.SeqE)
-	anchor := HandoffAnchor{
+	anchor := entry.HandoffAnchor{
 		// range: [SeqS,SeqE)
-		SeqRange: view.EntryRange{
-			SeqS: t.View.SeqS,
-			SeqE: anchorSeq,
-		},
+		SeqS: t.View.SeqS,
+		SeqE: anchorSeq,
 	}
-	if anchor.SeqRange.SeqS == 0 {
-		anchor.SeqRange.SeqS = 1
+	if anchor.SeqS == 0 {
+		anchor.SeqS = 1
 	}
 	for _, opt := range opts {
 		opt(&anchor)
 	}
-	if anchor.SeqRange.SeqS > anchor.SeqRange.SeqE {
+	if anchor.SeqS > anchor.SeqE {
 		return fmt.Errorf(
 			"tape: invalid handoff range [%d,%d)",
-			anchor.SeqRange.SeqS,
-			anchor.SeqRange.SeqE,
+			anchor.SeqS,
+			anchor.SeqE,
 		)
 	}
 

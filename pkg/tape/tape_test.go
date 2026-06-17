@@ -154,6 +154,10 @@ func (noopStorage) Range(context.Context, view.EntryRange) (view.EntryView, erro
 	return view.EntryView{}, nil
 }
 
+func (noopStorage) Rewind(context.Context, int) (view.EntryRange, error) {
+	return view.EntryRange{}, nil
+}
+
 func (noopStorage) Search(context.Context, ...storage.SearchBy) (view.EntryView, error) {
 	return view.EntryView{}, nil
 }

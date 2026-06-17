@@ -41,3 +41,18 @@ func NewAnchor(
 		Owner: owner,
 	}
 }
+
+// HandoffAnchor describes the payload carried by an anchor:handoff entry.
+//
+// Tape exposes an entryView as the sliding window that an agent can currently
+// work with. When that window grows too large, the agent or an upper layer can
+// summarize the current entryView, write a handoff anchor for the covered range,
+// archive the older entries, and then reset the sliding window after the anchor.
+//
+// Summary is the compact memory of the archived window. SeqRange records the
+// original entries covered by that summary so a future agent can look back into
+// the archive when the summary is not enough.
+type HandoffAnchor struct {
+	Summary    string
+	SeqS, SeqE uint64
+}

@@ -313,6 +313,78 @@ func (j *JSONL) Range(
 	return v, nil
 }
 
+func (j *JSONL) Rewind(ctx context.Context, seq int) (view.EntryRange, error) {
+	if seq <= 0 {
+		return view.EntryRange{}, fmt.Errorf("jsonl: rewind: invalid seq %d", seq)
+	}
+
+	_, state, err := j.ownerState(ctx, false)
+	if err != nil {
+		return view.EntryRange{}, fmt.Errorf("jsonl: %w", err)
+	}
+	state.RLock()
+	defer state.RUnlock()
+
+	seqID := uint64(seq)
+	for i := len(state.indexes) - 1; i >= 0; i-- {
+		index := state.indexes[i]
+		if index.Entries == 0 || index.Scope.SeqS > seqID {
+			continue
+		}
+		r, ok, err := j.rewindIndex(ctx, index.Path, seqID)
+		if err != nil {
+			return view.EntryRange{}, fmt.Errorf("jsonl: rewind: %w", err)
+		}
+		if ok {
+			return r, nil
+		}
+	}
+	return view.EntryRange{}, fmt.Errorf("jsonl: rewind: no handoff anchor before seq %d", seq)
+}
+
+func (j *JSONL) rewindIndex(
+	ctx context.Context,
+	path string,
+	seq uint64,
+) (view.EntryRange, bool, error) {
+	fd, err := j.Open(path)
+	if err != nil {
+		return view.EntryRange{}, false, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer fd.Close()
+
+	var latest entry.Entry
+	decoder := json.NewDecoder(fd)
+	for {
+		if err := ctx.Err(); err != nil {
+			return view.EntryRange{}, false, err
+		}
+
+		var e entry.Entry
+		if err := decoder.Decode(&e); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return view.EntryRange{}, false, fmt.Errorf("decode %s: %w", path, err)
+		}
+		if e.GetID() <= seq && e.GetKind() == entry.EntryKind(entry.AnchorKindHandoff.String()) {
+			latest = e
+		}
+	}
+	if latest.GetID() == 0 {
+		return view.EntryRange{}, false, nil
+	}
+
+	var anchor entry.HandoffAnchor
+	if err := json.Unmarshal([]byte(latest.Text), &anchor); err != nil {
+		return view.EntryRange{}, false, fmt.Errorf("decode handoff anchor %d: %w", latest.GetID(), err)
+	}
+	return view.EntryRange{
+		SeqS: anchor.SeqS,
+		SeqE: anchor.SeqE,
+	}, true, nil
+}
+
 func (j *JSONL) readEntriesInRange(
 	ctx context.Context,
 	path string,

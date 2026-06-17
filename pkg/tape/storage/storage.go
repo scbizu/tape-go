@@ -18,6 +18,8 @@ type EntryStorage interface {
 type TapeStorage interface {
 	Init(context.Context) error
 	Get(context.Context) (view.TapeView, error)
+	// Rewind gets the latest `anchor` context from `seq` back to the current context window
+	Rewind(ctx context.Context, seq int) (view.EntryRange, error)
 	// TODO: Mask marks the time-period from a tape as low-priority
 	// 往事不堪回首 , 也许我们需要一个机制来定义某些记忆是我们不想记起来的
 	// Be fair to agents

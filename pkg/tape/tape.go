@@ -85,10 +85,6 @@ func (t *Tape) Close() error {
 	return nil
 }
 
-func (t *Tape) WriteEntry(ctx context.Context) error {
-	return nil
-}
-
 func (t *Tape) context() context.Context {
 	return owner.WithOwnerId(context.Background(), t.OwnerID)
 }
