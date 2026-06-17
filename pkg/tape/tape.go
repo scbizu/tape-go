@@ -14,6 +14,10 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
+// We should treat Tape as the system I/O
+// so , we can allow tape to iterate itself via agent sdk's general system I/O operation skill
+//
+// 得益于这个机制，我们可以让 agent 自己判断什么时候该 handoff , 或者自己梳理上下文
 var _ (io.ReadWriteCloser) = (*Tape)(nil)
 
 // Tape is the agent's backend
@@ -66,6 +70,7 @@ func (t *Tape) Write(p []byte) (int, error) {
 	if err := t.Store(t.context(), e); err != nil {
 		return 0, err
 	}
+	t.View.SeqE = 0
 	t.readBuf = nil
 	return len(p), nil
 }
@@ -178,4 +183,9 @@ func (t *Tape) fillEntryDefaults(ctx context.Context, e entry.Entry) (entry.Entr
 		}
 	}
 	return e, nil
+}
+
+func (t *Tape) resetReadState() {
+	t.readSeq = 0
+	t.readBuf = nil
 }

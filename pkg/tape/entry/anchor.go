@@ -31,6 +31,13 @@ type Anchor struct {
 func NewAnchor(
 	seq uint64,
 	owner string,
+	kind AnchorKind,
 	ext json.RawMessage,
-) {
+) Entry {
+	return Entry{
+		Seq:   seq,
+		Ek:    EntryKind(kind.String()),
+		Text:  string(ext),
+		Owner: owner,
+	}
 }
