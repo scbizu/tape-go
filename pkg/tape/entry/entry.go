@@ -16,6 +16,8 @@ const (
 type EntryLike interface {
 	// The range-able or hash-able ID of the entry
 	GetID() uint64
+	// WithID returns the entry with the given ID.
+	WithID(uint64) EntryLike
 	// The kind of the entry
 	GetKind() EntryKind
 	// Entry should have the ability to summarize itself
@@ -81,6 +83,11 @@ func (e Entry) GetID() uint64 {
 	return e.Seq
 }
 
+func (e Entry) WithID(id uint64) EntryLike {
+	e.Seq = id
+	return e
+}
+
 func (e Entry) GetKind() EntryKind {
 	return e.Ek
 }
@@ -97,4 +104,9 @@ func (e Entry) GetOwner() string {
 type CustomEntry struct {
 	Entry
 	Extensions map[string]any
+}
+
+func (e CustomEntry) WithID(id uint64) EntryLike {
+	e.Seq = id
+	return e
 }

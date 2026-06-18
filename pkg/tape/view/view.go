@@ -20,7 +20,7 @@ type EntryView struct {
 	// Technically, [SeqS,SeqE)
 	Scope EntryRange
 
-	Raw []entry.Entry
+	Raw []entry.EntryLike
 	// Optional . If we need to integrate with some semantic search
 	Summary string
 }

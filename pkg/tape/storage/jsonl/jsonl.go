@@ -197,8 +197,11 @@ func (j *JSONL) Get(
 
 func (j *JSONL) Store(
 	ctx context.Context,
-	e entry.Entry,
+	e entry.EntryLike,
 ) error {
+	if e == nil {
+		return errors.New("jsonl: nil entry")
+	}
 	_, state, err := j.ownerState(ctx, false)
 	if err != nil {
 		return err
@@ -209,8 +212,8 @@ func (j *JSONL) Store(
 	if len(state.indexes) == 0 {
 		return errors.New("jsonl: no index to store")
 	}
-	if e.Seq == 0 {
-		e.Seq = entry.NextEntryID(state.lastEntryId)
+	if e.GetID() == 0 {
+		e = e.WithID(entry.NextEntryID(state.lastEntryId))
 	}
 	index := &state.indexes[len(state.indexes)-1]
 	// append e to the file
@@ -241,8 +244,8 @@ func buildJSONLIndex(fs afero.Fs, path string) (JSONLIndex, error) {
 	index := JSONLIndex{Path: path}
 	decoder := json.NewDecoder(fd)
 	for {
-		var e entry.Entry
-		if err := decoder.Decode(&e); errors.Is(err, io.EOF) {
+		e, err := decodeEntry(decoder)
+		if errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
 			return JSONLIndex{}, fmt.Errorf("decode %s: %w", path, err)
@@ -352,7 +355,7 @@ func (j *JSONL) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.Entr
 		}
 		for i := len(anchors) - 1; i >= 0 && found < option.MaxAnchors; i-- {
 			var anchor entry.HandoffAnchor
-			if err := json.Unmarshal([]byte(anchors[i].Text), &anchor); err != nil {
+			if err := json.Unmarshal([]byte(anchors[i].GetSummary()), &anchor); err != nil {
 				return view.EntryRange{}, fmt.Errorf("jsonl: rewind: decode anchor %d: %w", anchors[i].GetID(), err)
 			}
 			r := view.EntryRange{SeqS: anchor.SeqS, SeqE: anchor.SeqE}
@@ -378,22 +381,22 @@ func (j *JSONL) rewindIndex(
 	ctx context.Context,
 	path string,
 	seq uint64,
-) ([]entry.Entry, error) {
+) ([]entry.EntryLike, error) {
 	fd, err := j.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	defer fd.Close()
 
-	var anchors []entry.Entry
+	var anchors []entry.EntryLike
 	decoder := json.NewDecoder(fd)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 
-		var e entry.Entry
-		if err := decoder.Decode(&e); err != nil {
+		e, err := decodeEntry(decoder)
+		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}
@@ -410,22 +413,22 @@ func (j *JSONL) readEntriesInRange(
 	ctx context.Context,
 	path string,
 	r view.EntryRange,
-) ([]entry.Entry, error) {
+) ([]entry.EntryLike, error) {
 	fd, err := j.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	defer fd.Close()
 
-	var entries []entry.Entry
+	var entries []entry.EntryLike
 	decoder := json.NewDecoder(fd)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 
-		var e entry.Entry
-		if err := decoder.Decode(&e); err != nil {
+		e, err := decodeEntry(decoder)
+		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}
@@ -436,6 +439,33 @@ func (j *JSONL) readEntriesInRange(
 		}
 	}
 	return entries, nil
+}
+
+func decodeEntry(decoder *json.Decoder) (entry.EntryLike, error) {
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, err
+	}
+
+	var probe struct {
+		Extensions json.RawMessage
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return nil, err
+	}
+	if probe.Extensions != nil {
+		var e entry.CustomEntry
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return nil, err
+		}
+		return e, nil
+	}
+
+	var e entry.Entry
+	if err := json.Unmarshal(raw, &e); err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
 func (j *JSONL) Search(

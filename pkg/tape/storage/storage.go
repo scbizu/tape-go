@@ -9,7 +9,7 @@ import (
 )
 
 type EntryStorage interface {
-	Store(context.Context, entry.Entry) error
+	Store(context.Context, entry.EntryLike) error
 	Range(context.Context, view.EntryRange) (view.EntryView, error)
 	// Search is a more abstracted `Range` , maybe for embedding search
 	Search(context.Context, ...SearchBy) (view.EntryView, error)

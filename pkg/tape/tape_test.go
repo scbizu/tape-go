@@ -155,7 +155,7 @@ func (noopStorage) Get(context.Context) (view.TapeView, error) {
 	return view.TapeView{}, nil
 }
 
-func (noopStorage) Store(context.Context, entry.Entry) error {
+func (noopStorage) Store(context.Context, entry.EntryLike) error {
 	return nil
 }
 

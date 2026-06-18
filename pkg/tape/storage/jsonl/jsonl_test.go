@@ -151,6 +151,39 @@ func TestJSONLUsesEmbeddedAferoFS(t *testing.T) {
 	}
 }
 
+func TestJSONLRoundTripsCustomEntry(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewJSONLStorage("session-memory", "/tapes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Fs = afero.NewMemMapFs()
+	ctx := owner.WithOwnerId(context.Background(), "owner-a")
+	if err := store.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	want := entry.CustomEntry{
+		Entry:      entry.NewEntry(entry.WithEntryContent("hello")),
+		Extensions: map[string]any{"event_id": "event-1"},
+	}
+	if err := store.Store(ctx, want); err != nil {
+		t.Fatal(err)
+	}
+	view, err := store.Range(ctx, view.EntryRange{SeqS: 1, SeqE: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := view.Raw[0].(entry.CustomEntry)
+	if !ok {
+		t.Fatalf("entry type mismatch: %T", view.Raw[0])
+	}
+	if got.GetID() != 1 || got.Extensions["event_id"] != "event-1" {
+		t.Fatalf("custom entry mismatch: %+v", got)
+	}
+}
+
 func TestJSONLSeparatesOwnerState(t *testing.T) {
 	t.Parallel()
 
@@ -294,8 +327,8 @@ func TestJSONLAssignsEntryIDsAtomically(t *testing.T) {
 		t.Fatalf("entries len mismatch: want %d, got %d", writes, len(got.Raw))
 	}
 	for i, e := range got.Raw {
-		if e.Seq != uint64(i+1) {
-			t.Fatalf("entry %d seq mismatch: want %d, got %d", i, i+1, e.Seq)
+		if e.GetID() != uint64(i+1) {
+			t.Fatalf("entry %d seq mismatch: want %d, got %d", i, i+1, e.GetID())
 		}
 	}
 }
