@@ -19,6 +19,7 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
+	jsonlines "github.com/simonfrey/jsonl"
 	"github.com/spf13/afero"
 )
 
@@ -208,6 +209,9 @@ func (j *JSONL) Store(
 	if len(state.indexes) == 0 {
 		return errors.New("jsonl: no index to store")
 	}
+	if e.Seq == 0 {
+		e.Seq = entry.NextEntryID(state.lastEntryId)
+	}
 	index := &state.indexes[len(state.indexes)-1]
 	// append e to the file
 	fd, err := j.OpenFile(index.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -215,7 +219,7 @@ func (j *JSONL) Store(
 		return fmt.Errorf("jsonl: open file: %w", err)
 	}
 	defer fd.Close()
-	if err := json.NewEncoder(fd).Encode(e); err != nil {
+	if err := jsonlines.NewWriter(fd).Write(e); err != nil {
 		return fmt.Errorf("jsonl: encodes entry to storage failed: %w", err)
 	}
 	if index.Entries == 0 {

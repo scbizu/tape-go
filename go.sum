@@ -1,3 +1,5 @@
+github.com/simonfrey/jsonl v0.0.0-20240904112901-935399b9a740 h1:CXJI+lliMiiEwzfgE8yt/38K0heYDgQ0L3f/3fxRnQU=
+github.com/simonfrey/jsonl v0.0.0-20240904112901-935399b9a740/go.mod h1:G4w16caPmc6at7u4fmkj/8OAoOnM9mkmJr2fvL0vhaw=
 github.com/spf13/afero v1.15.0 h1:b/YBCLWAJdFWJTN9cLhiXXcD7mzKn9Dm86dNnfyQw1I=
 github.com/spf13/afero v1.15.0/go.mod h1:NC2ByUVxtQs4b3sIUphxK0NioZnmxgyCrfzeuq8lxMg=
 golang.org/x/text v0.28.0 h1:rhazDwis8INMIwQ4tpjLDzUhx6RlXqZNPEM0huQojng=

@@ -12,6 +12,7 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
+	jsonlines "github.com/simonfrey/jsonl"
 )
 
 // We should treat Tape as the system I/O
@@ -117,11 +118,11 @@ func (t *Tape) nextEntryView() error {
 		return t.nextEntryView()
 	}
 
-	data, err := json.Marshal(ev)
-	if err != nil {
+	var data bytes.Buffer
+	if err := jsonlines.NewWriter(&data).Write(ev.Raw[0]); err != nil {
 		return err
 	}
-	t.readBuf = bytes.NewReader(data)
+	t.readBuf = bytes.NewReader(data.Bytes())
 	return nil
 }
 
@@ -135,7 +136,7 @@ func (t *Tape) entryFromBytes(p []byte) (entry.Entry, error) {
 
 	switch v := raw.(type) {
 	case string:
-		return t.stringEntry(ctx, v)
+		return t.stringEntry(v)
 	case map[string]any:
 		var e entry.Entry
 		if err := json.Unmarshal(p, &e); err != nil {
@@ -147,31 +148,14 @@ func (t *Tape) entryFromBytes(p []byte) (entry.Entry, error) {
 	}
 }
 
-func (t *Tape) stringEntry(ctx context.Context, text string) (entry.Entry, error) {
-	tv, err := t.Get(ctx)
-	if err != nil {
-		return entry.Entry{}, err
-	}
+func (t *Tape) stringEntry(text string) (entry.Entry, error) {
 	return entry.NewEntry(
-		entry.WithEntryID(
-			entry.NextEntryID(tv.Scope.SeqE),
-		),
 		entry.WithEntryContent(text),
-		entry.WithEntryOwner(tv.Owner),
+		entry.WithEntryOwner(t.OwnerID),
 	), nil
 }
 
 func (t *Tape) fillEntryDefaults(ctx context.Context, e entry.Entry) (entry.Entry, error) {
-	if e.Seq == 0 {
-		tv, err := t.Get(ctx)
-		if err != nil {
-			return entry.Entry{}, err
-		}
-		e.Seq = entry.NextEntryID(tv.Scope.SeqE)
-		if e.Owner == "" {
-			e.Owner = tv.Owner
-		}
-	}
 	if e.Owner == "" {
 		ownerID, err := owner.GetOwnerId(ctx)
 		if err == nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -256,6 +257,46 @@ func TestJSONLGetReturnsLastEntryID(t *testing.T) {
 	}
 	if got.Scope.SeqE != 13 {
 		t.Fatalf("reloaded scope end mismatch: want 13, got %d", got.Scope.SeqE)
+	}
+}
+
+func TestJSONLAssignsEntryIDsAtomically(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewJSONLStorage("session-a", "/tapes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Fs = afero.NewMemMapFs()
+	ctx := owner.WithOwnerId(context.Background(), "owner-a")
+	if err := store.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	const writes = 20
+	var wg sync.WaitGroup
+	for range writes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := store.Store(ctx, entry.Entry{}); err != nil {
+				t.Errorf("Store: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	got, err := store.Range(ctx, view.EntryRange{SeqS: 1, SeqE: writes + 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Raw) != writes {
+		t.Fatalf("entries len mismatch: want %d, got %d", writes, len(got.Raw))
+	}
+	for i, e := range got.Raw {
+		if e.Seq != uint64(i+1) {
+			t.Fatalf("entry %d seq mismatch: want %d, got %d", i, i+1, e.Seq)
+		}
 	}
 }
 

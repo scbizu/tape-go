@@ -36,6 +36,15 @@ func TestTapeWriteAndReadEntriesThroughSystemIO(t *testing.T) {
 	}
 
 	data := readAllWithSmallBuffer(t, tape, 7)
+	lines := bytes.Split(bytes.TrimSpace(data), []byte{'\n'})
+	if len(lines) != len(payloads) {
+		t.Fatalf("JSONL lines mismatch: want %d, got %d from %s", len(payloads), len(lines), data)
+	}
+	for _, line := range lines {
+		if !json.Valid(line) {
+			t.Fatalf("invalid JSONL line: %s", line)
+		}
+	}
 	got := decodeEntryViews(t, data)
 
 	wantText := []string{"hello", "world"}
@@ -125,14 +134,14 @@ func decodeEntryViews(t *testing.T, data []byte) []entry.Entry {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	var entries []entry.Entry
 	for {
-		var viewEntries []entry.Entry
-		if err := decoder.Decode(&viewEntries); err != nil {
+		var e entry.Entry
+		if err := decoder.Decode(&e); err != nil {
 			if errors.Is(err, io.EOF) {
 				return entries
 			}
-			t.Fatalf("decode entry view from %s: %v", data, err)
+			t.Fatalf("decode entry from %s: %v", data, err)
 		}
-		entries = append(entries, viewEntries...)
+		entries = append(entries, e)
 	}
 }
 
