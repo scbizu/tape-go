@@ -349,7 +349,7 @@ func (j *JSONL) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.Entr
 		for i := len(anchors) - 1; i >= 0 && found < option.MaxAnchors; i-- {
 			var anchor entry.HandoffAnchor
 			if err := json.Unmarshal([]byte(anchors[i].Text), &anchor); err != nil {
-				return view.EntryRange{}, fmt.Errorf("jsonl: rewind: decode handoff anchor %d: %w", anchors[i].GetID(), err)
+				return view.EntryRange{}, fmt.Errorf("jsonl: rewind: decode anchor %d: %w", anchors[i].GetID(), err)
 			}
 			r := view.EntryRange{SeqS: anchor.SeqS, SeqE: anchor.SeqE}
 			if found == 0 {
@@ -367,7 +367,7 @@ func (j *JSONL) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.Entr
 	if found > 0 {
 		return result, nil
 	}
-	return view.EntryRange{}, fmt.Errorf("jsonl: rewind: no handoff anchor before seq %d", option.FromSeq)
+	return view.EntryRange{}, fmt.Errorf("jsonl: rewind: no anchor before seq %d", option.FromSeq)
 }
 
 func (j *JSONL) rewindIndex(
@@ -395,7 +395,7 @@ func (j *JSONL) rewindIndex(
 			}
 			return nil, fmt.Errorf("decode %s: %w", path, err)
 		}
-		if e.GetID() <= seq && e.GetKind() == entry.EntryKind(entry.AnchorKindHandoff.String()) {
+		if e.GetID() <= seq && strings.HasPrefix(string(e.GetKind()), "anchor:") {
 			anchors = append(anchors, e)
 		}
 	}
