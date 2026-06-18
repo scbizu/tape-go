@@ -1,6 +1,10 @@
 package entry
 
-import "sync/atomic"
+import (
+	"strings"
+	"sync/atomic"
+	"time"
+)
 
 type EntryKind string
 
@@ -10,7 +14,12 @@ const (
 	EntryToolCall   EntryKind = "tool_call"
 	EntryToolResult EntryKind = "tool_result"
 	EntrySystem     EntryKind = "system"
+	EntryAnchor     EntryKind = "anchor"
 )
+
+func (k EntryKind) IsAnchor() bool {
+	return k == EntryAnchor || strings.HasPrefix(string(k), string(EntryAnchor)+":")
+}
 
 // EntryLike is the duck-type interface for entries
 type EntryLike interface {
@@ -25,6 +34,10 @@ type EntryLike interface {
 	GetSummary() string
 	// The owner of the entry
 	GetOwner() string
+	// The time when the entry was created
+	GetTimestamp() time.Time
+	// WithTimestamp returns the entry with the given timestamp.
+	WithTimestamp(time.Time) EntryLike
 }
 
 var (
@@ -35,7 +48,7 @@ var (
 func NewEntry(
 	opts ...EntryOption,
 ) Entry {
-	var e Entry
+	e := Entry{Timestamp: time.Now()}
 	for _, opt := range opts {
 		opt(&e)
 	}
@@ -68,15 +81,22 @@ func WithEntryID(id uint64) EntryOption {
 	}
 }
 
+func WithEntryTimestamp(timestamp time.Time) EntryOption {
+	return func(e *Entry) {
+		e.Timestamp = timestamp
+	}
+}
+
 func NextEntryID(old uint64) uint64 {
 	return atomic.AddUint64(&old, +1)
 }
 
 type Entry struct {
-	Seq   uint64
-	Ek    EntryKind
-	Text  string
-	Owner string
+	Seq       uint64
+	Ek        EntryKind
+	Text      string
+	Owner     string
+	Timestamp time.Time
 }
 
 func (e Entry) GetID() uint64 {
@@ -100,6 +120,15 @@ func (e Entry) GetOwner() string {
 	return e.Owner
 }
 
+func (e Entry) GetTimestamp() time.Time {
+	return e.Timestamp
+}
+
+func (e Entry) WithTimestamp(timestamp time.Time) EntryLike {
+	e.Timestamp = timestamp
+	return e
+}
+
 // CustomEntry is an `entry` that carries with some extensions
 type CustomEntry struct {
 	Entry
@@ -108,5 +137,10 @@ type CustomEntry struct {
 
 func (e CustomEntry) WithID(id uint64) EntryLike {
 	e.Seq = id
+	return e
+}
+
+func (e CustomEntry) WithTimestamp(timestamp time.Time) EntryLike {
+	e.Timestamp = timestamp
 	return e
 }

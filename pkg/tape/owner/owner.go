@@ -5,9 +5,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var ErrorOwnerNotFound = errors.New("ownerId not found")
+
+const (
+	SystemUser  = "user"
+	SystemAgent = "agent"
+	UserPrefix  = "u:"
+)
+
+func UserID(id string) string {
+	return UserPrefix + strings.TrimPrefix(id, UserPrefix)
+}
+
+func IsUserID(id string) bool {
+	return strings.HasPrefix(id, UserPrefix)
+}
 
 type ownerIdKey struct{}
 

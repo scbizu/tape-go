@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"iter"
 	"maps"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -128,6 +129,7 @@ func (a *TapeAdapter) AppendEvent(ctx context.Context, current session.Session, 
 			entry.WithEntryKind(eventEntryKind(event)),
 			entry.WithEntryContent(eventSummary(event)),
 			entry.WithEntryOwner(a.Tape.OwnerID),
+			entry.WithEntryTimestamp(event.Timestamp),
 		),
 		Extensions: map[string]any{adkEventExtension: string(payload)},
 	}
@@ -180,13 +182,13 @@ func (a *TapeAdapter) ContextWindow(ctx adkagent.CallbackContext, req *model.LLM
 	if err != nil {
 		return nil, err
 	}
-	entries, err := a.activeEntries(ctx, tapeView)
+	entries, err := a.activeEntries(ctx, tapeView, time.Time{})
 	if err != nil {
 		return nil, err
 	}
 	contents := make([]*genai.Content, 0, len(entries))
 	for _, tapeEntry := range entries {
-		if strings.HasPrefix(string(tapeEntry.GetKind()), "anchor:") {
+		if tapeEntry.GetKind().IsAnchor() {
 			continue
 		}
 		event, err := eventFromEntry(tapeEntry)
@@ -206,25 +208,42 @@ func (a *TapeAdapter) loadSession(ctx context.Context, recent int, after time.Ti
 	if err != nil {
 		return nil, err
 	}
-	entries, err := a.activeEntries(ctx, tapeView)
+	hydrated := a.state.isHydrated()
+	storageAfter := time.Time{}
+	if hydrated {
+		storageAfter = after
+	}
+	entries, err := a.activeEntries(ctx, tapeView, storageAfter)
 	if err != nil {
 		return nil, err
 	}
+	includeFrom := 0
+	if !after.IsZero() {
+		includeFrom = sort.Search(len(entries), func(i int) bool {
+			return !entries[i].GetTimestamp().Before(after)
+		})
+	}
+	decodeFrom := 0
+	if hydrated {
+		decodeFrom = includeFrom
+	}
 	events := make(tapeEvents, 0, len(entries))
-	for _, tapeEntry := range entries {
-		if strings.HasPrefix(string(tapeEntry.GetKind()), "anchor:") {
+	for i, tapeEntry := range entries[decodeFrom:] {
+		if tapeEntry.GetKind().IsAnchor() {
 			continue
 		}
 		event, err := eventFromEntry(tapeEntry)
 		if err != nil {
 			return nil, err
 		}
+		event.Timestamp = tapeEntry.GetTimestamp()
 		a.applyStateDelta(event.Actions.StateDelta)
-		if !after.IsZero() && event.Timestamp.Before(after) {
+		if decodeFrom+i < includeFrom {
 			continue
 		}
 		events = append(events, event)
 	}
+	a.state.markHydrated()
 	if recent > 0 && len(events) > recent {
 		events = events[len(events)-recent:]
 	}
@@ -242,7 +261,7 @@ func (a *TapeAdapter) loadSession(ctx context.Context, recent int, after time.Ti
 	}, nil
 }
 
-func (a *TapeAdapter) activeEntries(ctx context.Context, tapeView view.TapeView) ([]entry.EntryLike, error) {
+func (a *TapeAdapter) activeEntries(ctx context.Context, tapeView view.TapeView, after time.Time) ([]entry.EntryLike, error) {
 	if tapeView.Scope.SeqE == 0 {
 		return nil, nil
 	}
@@ -253,7 +272,7 @@ func (a *TapeAdapter) activeEntries(ctx context.Context, tapeView view.TapeView)
 	entries, err := a.Tape.Range(a.tapeContext(ctx), view.EntryRange{
 		SeqS: start,
 		SeqE: entry.NextEntryID(tapeView.Scope.SeqE),
-	})
+	}, storage.WithRangeAfter(after))
 	if err != nil {
 		return nil, err
 	}
@@ -324,8 +343,9 @@ func (events tapeEvents) Len() int                    { return len(events) }
 func (events tapeEvents) At(index int) *session.Event { return events[index] }
 
 type tapeState struct {
-	mu     sync.RWMutex
-	values map[string]any
+	mu       sync.RWMutex
+	values   map[string]any
+	hydrated bool
 }
 
 func newTapeState(values map[string]any) *tapeState {
@@ -365,6 +385,18 @@ func (s *tapeState) replace(values map[string]any) {
 	s.values = maps.Clone(values)
 }
 
+func (s *tapeState) isHydrated() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.hydrated
+}
+
+func (s *tapeState) markHydrated() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hydrated = true
+}
+
 func eventFromEntry(tapeEntry entry.EntryLike) (*session.Event, error) {
 	if raw, ok := eventExtension(tapeEntry); ok {
 		var event session.Event
@@ -375,14 +407,15 @@ func eventFromEntry(tapeEntry entry.EntryLike) (*session.Event, error) {
 	}
 
 	role := genai.RoleModel
-	author := "agent"
+	author := owner.SystemAgent
 	if tapeEntry.GetKind() == entry.EntryUser {
 		role = genai.RoleUser
-		author = "user"
+		author = owner.SystemUser
 	}
 	return &session.Event{
-		ID:     strconv.FormatUint(tapeEntry.GetID(), 10),
-		Author: author,
+		ID:        strconv.FormatUint(tapeEntry.GetID(), 10),
+		Author:    author,
+		Timestamp: tapeEntry.GetTimestamp(),
 		LLMResponse: model.LLMResponse{Content: &genai.Content{
 			Role:  role,
 			Parts: []*genai.Part{{Text: tapeEntry.GetSummary()}},
@@ -405,7 +438,7 @@ func eventExtension(tapeEntry entry.EntryLike) (string, bool) {
 }
 
 func eventEntryKind(event *session.Event) entry.EntryKind {
-	if event.Author == "user" || event.Content != nil && event.Content.Role == genai.RoleUser {
+	if event.Author == owner.SystemUser || event.Content != nil && event.Content.Role == genai.RoleUser {
 		return entry.EntryUser
 	}
 	for _, part := range eventParts(event) {

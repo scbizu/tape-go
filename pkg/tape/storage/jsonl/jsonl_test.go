@@ -11,6 +11,7 @@ import (
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
+	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 	"github.com/spf13/afero"
 )
@@ -182,6 +183,9 @@ func TestJSONLRoundTripsCustomEntry(t *testing.T) {
 	if got.GetID() != 1 || got.Extensions["event_id"] != "event-1" {
 		t.Fatalf("custom entry mismatch: %+v", got)
 	}
+	if !got.GetTimestamp().Equal(want.GetTimestamp()) {
+		t.Fatalf("timestamp mismatch: want %v, got %v", want.GetTimestamp(), got.GetTimestamp())
+	}
 }
 
 func TestJSONLSeparatesOwnerState(t *testing.T) {
@@ -291,6 +295,24 @@ func TestJSONLGetReturnsLastEntryID(t *testing.T) {
 	if got.Scope.SeqE != 13 {
 		t.Fatalf("reloaded scope end mismatch: want 13, got %d", got.Scope.SeqE)
 	}
+	lastTimestamp := mustOwnerState(t, reloaded, "owner-a").lastTimestamp
+	if err := reloaded.Store(ctx, entry.NewEntry(entry.WithEntryTimestamp(time.Unix(1, 0)))); err != nil {
+		t.Fatalf("Store after reload: %v", err)
+	}
+	entries, err := reloaded.Range(ctx, view.EntryRange{SeqS: 14, SeqE: 15})
+	if err != nil {
+		t.Fatalf("Range after reload: %v", err)
+	}
+	if len(entries.Raw) != 1 || !entries.Raw[0].GetTimestamp().After(lastTimestamp) {
+		t.Fatalf("timestamp did not grow after reload: previous=%v entries=%v", lastTimestamp, entries.Raw)
+	}
+	entries, err = reloaded.Range(ctx, view.EntryRange{SeqS: 7, SeqE: 15}, storage.WithRangeAfter(lastTimestamp))
+	if err != nil {
+		t.Fatalf("Range after timestamp: %v", err)
+	}
+	if len(entries.Raw) != 2 {
+		t.Fatalf("Range after timestamp returned %d entries, want 2", len(entries.Raw))
+	}
 }
 
 func TestJSONLAssignsEntryIDsAtomically(t *testing.T) {
@@ -329,6 +351,12 @@ func TestJSONLAssignsEntryIDsAtomically(t *testing.T) {
 	for i, e := range got.Raw {
 		if e.GetID() != uint64(i+1) {
 			t.Fatalf("entry %d seq mismatch: want %d, got %d", i, i+1, e.GetID())
+		}
+		if e.GetTimestamp().IsZero() {
+			t.Fatalf("entry %d timestamp is zero", i)
+		}
+		if i > 0 && !e.GetTimestamp().After(got.Raw[i-1].GetTimestamp()) {
+			t.Fatalf("entry %d timestamp %v does not follow %v", i, e.GetTimestamp(), got.Raw[i-1].GetTimestamp())
 		}
 	}
 }

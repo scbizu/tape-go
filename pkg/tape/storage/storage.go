@@ -3,6 +3,7 @@ package storage
 
 import (
 	"context"
+	"time"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/view"
@@ -10,7 +11,7 @@ import (
 
 type EntryStorage interface {
 	Store(context.Context, entry.EntryLike) error
-	Range(context.Context, view.EntryRange) (view.EntryView, error)
+	Range(context.Context, view.EntryRange, ...RangeBy) (view.EntryView, error)
 	// Search is a more abstracted `Range` , maybe for embedding search
 	Search(context.Context, ...SearchBy) (view.EntryView, error)
 }
@@ -30,6 +31,18 @@ type TapeStorage interface {
 }
 
 type SessionID string
+
+type RangeOption struct {
+	After time.Time
+}
+
+type RangeBy func(*RangeOption)
+
+func WithRangeAfter(after time.Time) RangeBy {
+	return func(option *RangeOption) {
+		option.After = after
+	}
+}
 
 type SearchOption struct {
 	eId            string

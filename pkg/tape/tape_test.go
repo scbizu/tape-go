@@ -159,7 +159,7 @@ func (noopStorage) Store(context.Context, entry.EntryLike) error {
 	return nil
 }
 
-func (noopStorage) Range(context.Context, view.EntryRange) (view.EntryView, error) {
+func (noopStorage) Range(context.Context, view.EntryRange, ...storage.RangeBy) (view.EntryView, error) {
 	return view.EntryView{}, nil
 }
 

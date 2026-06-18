@@ -3,6 +3,7 @@ package entry
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 type AnchorKind uint32
@@ -35,10 +36,11 @@ func NewAnchor(
 	ext json.RawMessage,
 ) Entry {
 	return Entry{
-		Seq:   seq,
-		Ek:    EntryKind(kind.String()),
-		Text:  string(ext),
-		Owner: owner,
+		Seq:       seq,
+		Ek:        EntryKind(kind.String()),
+		Text:      string(ext),
+		Owner:     owner,
+		Timestamp: time.Now(),
 	}
 }
 

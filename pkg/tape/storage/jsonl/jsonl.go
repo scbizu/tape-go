@@ -45,13 +45,16 @@ type JSONLIndex struct {
 	Path    string
 	Scope   view.EntryRange
 	Entries uint64
+
+	lastTimestamp time.Time
 }
 
 type ownerJSONL struct {
 	sync.RWMutex
-	sessionId   string
-	lastEntryId uint64
-	indexes     []JSONLIndex
+	sessionId     string
+	lastEntryId   uint64
+	lastTimestamp time.Time
+	indexes       []JSONLIndex
 }
 
 type JSONL struct {
@@ -169,8 +172,11 @@ func (j *JSONL) Init(
 			indexes = append(indexes, index)
 		}
 		state.indexes = indexes
-		if len(indexes) > 0 {
-			state.lastEntryId = indexes[len(indexes)-1].Scope.SeqE
+		for _, index := range indexes {
+			state.lastEntryId = max(state.lastEntryId, index.Scope.SeqE)
+			if index.lastTimestamp.After(state.lastTimestamp) {
+				state.lastTimestamp = index.lastTimestamp
+			}
 		}
 	}
 	return nil
@@ -215,6 +221,14 @@ func (j *JSONL) Store(
 	if e.GetID() == 0 {
 		e = e.WithID(entry.NextEntryID(state.lastEntryId))
 	}
+	timestamp := e.GetTimestamp()
+	if timestamp.IsZero() {
+		timestamp = time.Now()
+	}
+	if !timestamp.After(state.lastTimestamp) {
+		timestamp = state.lastTimestamp.Add(time.Nanosecond)
+	}
+	e = e.WithTimestamp(timestamp)
 	index := &state.indexes[len(state.indexes)-1]
 	// append e to the file
 	fd, err := j.OpenFile(index.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -230,7 +244,9 @@ func (j *JSONL) Store(
 	}
 	index.Scope.SeqE = e.GetID()
 	index.Entries++
+	index.lastTimestamp = timestamp
 	state.lastEntryId = e.GetID()
+	state.lastTimestamp = timestamp
 	return nil
 }
 
@@ -255,6 +271,9 @@ func buildJSONLIndex(fs afero.Fs, path string) (JSONLIndex, error) {
 		}
 		index.Scope.SeqE = e.GetID()
 		index.Entries++
+		if e.GetTimestamp().After(index.lastTimestamp) {
+			index.lastTimestamp = e.GetTimestamp()
+		}
 	}
 	return index, nil
 }
@@ -281,7 +300,14 @@ func (j *JSONL) ownerState(ctx context.Context, create bool) (string, *ownerJSON
 func (j *JSONL) Range(
 	ctx context.Context,
 	r view.EntryRange,
+	opts ...storage.RangeBy,
 ) (view.EntryView, error) {
+	var option storage.RangeOption
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&option)
+		}
+	}
 	if r.SeqS > r.SeqE {
 		return view.EntryView{}, fmt.Errorf(
 			"jsonl: invalid range [%d,%d)",
@@ -308,10 +334,11 @@ func (j *JSONL) Range(
 	for _, index := range state.indexes {
 		if index.Entries == 0 ||
 			index.Scope.SeqE < r.SeqS ||
-			index.Scope.SeqS >= r.SeqE {
+			index.Scope.SeqS >= r.SeqE ||
+			!option.After.IsZero() && index.lastTimestamp.Before(option.After) {
 			continue
 		}
-		entries, err := j.readEntriesInRange(ctx, index.Path, r)
+		entries, err := j.readEntriesInRange(ctx, index.Path, r, option.After)
 		if err != nil {
 			return view.EntryView{}, fmt.Errorf("jsonl: range: %w", err)
 		}
@@ -402,7 +429,7 @@ func (j *JSONL) rewindIndex(
 			}
 			return nil, fmt.Errorf("decode %s: %w", path, err)
 		}
-		if e.GetID() <= seq && strings.HasPrefix(string(e.GetKind()), "anchor:") {
+		if e.GetID() <= seq && e.GetKind().IsAnchor() {
 			anchors = append(anchors, e)
 		}
 	}
@@ -413,6 +440,7 @@ func (j *JSONL) readEntriesInRange(
 	ctx context.Context,
 	path string,
 	r view.EntryRange,
+	after time.Time,
 ) ([]entry.EntryLike, error) {
 	fd, err := j.Open(path)
 	if err != nil {
@@ -434,7 +462,8 @@ func (j *JSONL) readEntriesInRange(
 			}
 			return nil, fmt.Errorf("decode %s: %w", path, err)
 		}
-		if e.GetID() >= r.SeqS && e.GetID() < r.SeqE {
+		if e.GetID() >= r.SeqS && e.GetID() < r.SeqE &&
+			(after.IsZero() || !e.GetTimestamp().Before(after)) {
 			entries = append(entries, e)
 		}
 	}
