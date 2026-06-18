@@ -154,7 +154,7 @@ func (noopStorage) Range(context.Context, view.EntryRange) (view.EntryView, erro
 	return view.EntryView{}, nil
 }
 
-func (noopStorage) Rewind(context.Context, int) (view.EntryRange, error) {
+func (noopStorage) Rewind(context.Context, ...storage.RewindBy) (view.EntryRange, error) {
 	return view.EntryRange{}, nil
 }
 

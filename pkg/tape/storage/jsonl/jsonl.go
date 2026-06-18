@@ -313,9 +313,19 @@ func (j *JSONL) Range(
 	return v, nil
 }
 
-func (j *JSONL) Rewind(ctx context.Context, seq int) (view.EntryRange, error) {
-	if seq <= 0 {
-		return view.EntryRange{}, fmt.Errorf("jsonl: rewind: invalid seq %d", seq)
+func (j *JSONL) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.EntryRange, error) {
+	option := storage.RewindOption{MaxAnchors: 1}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&option)
+		}
+	}
+	if option.MaxAnchors == 0 {
+		option.MaxAnchors = 1
+	}
+	seq := option.FromSeq
+	if seq == 0 {
+		seq = ^uint64(0)
 	}
 
 	_, state, err := j.ownerState(ctx, false)
@@ -325,39 +335,57 @@ func (j *JSONL) Rewind(ctx context.Context, seq int) (view.EntryRange, error) {
 	state.RLock()
 	defer state.RUnlock()
 
-	seqID := uint64(seq)
+	var result view.EntryRange
+	found := uint8(0)
 	for i := len(state.indexes) - 1; i >= 0; i-- {
 		index := state.indexes[i]
-		if index.Entries == 0 || index.Scope.SeqS > seqID {
+		if index.Entries == 0 || index.Scope.SeqS > seq {
 			continue
 		}
-		r, ok, err := j.rewindIndex(ctx, index.Path, seqID)
+		anchors, err := j.rewindIndex(ctx, index.Path, seq)
 		if err != nil {
 			return view.EntryRange{}, fmt.Errorf("jsonl: rewind: %w", err)
 		}
-		if ok {
-			return r, nil
+		for i := len(anchors) - 1; i >= 0 && found < option.MaxAnchors; i-- {
+			var anchor entry.HandoffAnchor
+			if err := json.Unmarshal([]byte(anchors[i].Text), &anchor); err != nil {
+				return view.EntryRange{}, fmt.Errorf("jsonl: rewind: decode handoff anchor %d: %w", anchors[i].GetID(), err)
+			}
+			r := view.EntryRange{SeqS: anchor.SeqS, SeqE: anchor.SeqE}
+			if found == 0 {
+				result = r
+			} else {
+				result.SeqS = min(result.SeqS, r.SeqS)
+				result.SeqE = max(result.SeqE, r.SeqE)
+			}
+			found++
+		}
+		if found == option.MaxAnchors {
+			return result, nil
 		}
 	}
-	return view.EntryRange{}, fmt.Errorf("jsonl: rewind: no handoff anchor before seq %d", seq)
+	if found > 0 {
+		return result, nil
+	}
+	return view.EntryRange{}, fmt.Errorf("jsonl: rewind: no handoff anchor before seq %d", option.FromSeq)
 }
 
 func (j *JSONL) rewindIndex(
 	ctx context.Context,
 	path string,
 	seq uint64,
-) (view.EntryRange, bool, error) {
+) ([]entry.Entry, error) {
 	fd, err := j.Open(path)
 	if err != nil {
-		return view.EntryRange{}, false, fmt.Errorf("open %s: %w", path, err)
+		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	defer fd.Close()
 
-	var latest entry.Entry
+	var anchors []entry.Entry
 	decoder := json.NewDecoder(fd)
 	for {
 		if err := ctx.Err(); err != nil {
-			return view.EntryRange{}, false, err
+			return nil, err
 		}
 
 		var e entry.Entry
@@ -365,24 +393,13 @@ func (j *JSONL) rewindIndex(
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return view.EntryRange{}, false, fmt.Errorf("decode %s: %w", path, err)
+			return nil, fmt.Errorf("decode %s: %w", path, err)
 		}
 		if e.GetID() <= seq && e.GetKind() == entry.EntryKind(entry.AnchorKindHandoff.String()) {
-			latest = e
+			anchors = append(anchors, e)
 		}
 	}
-	if latest.GetID() == 0 {
-		return view.EntryRange{}, false, nil
-	}
-
-	var anchor entry.HandoffAnchor
-	if err := json.Unmarshal([]byte(latest.Text), &anchor); err != nil {
-		return view.EntryRange{}, false, fmt.Errorf("decode handoff anchor %d: %w", latest.GetID(), err)
-	}
-	return view.EntryRange{
-		SeqS: anchor.SeqS,
-		SeqE: anchor.SeqE,
-	}, true, nil
+	return anchors, nil
 }
 
 func (j *JSONL) readEntriesInRange(

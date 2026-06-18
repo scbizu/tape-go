@@ -19,7 +19,7 @@ type TapeStorage interface {
 	Init(context.Context) error
 	Get(context.Context) (view.TapeView, error)
 	// Rewind gets the latest `anchor` context from `seq` back to the current context window
-	Rewind(ctx context.Context, seq int) (view.EntryRange, error)
+	Rewind(ctx context.Context, opts ...RewindBy) (view.EntryRange, error)
 	// TODO: Mask marks the time-period from a tape as low-priority
 	// 往事不堪回首 , 也许我们需要一个机制来定义某些记忆是我们不想记起来的
 	// Be fair to agents
@@ -41,5 +41,27 @@ type SearchBy func(*SearchOption)
 func WithEntryId(eId string) SearchBy {
 	return func(so *SearchOption) {
 		so.eId = eId
+	}
+}
+
+type RewindOption struct {
+	// fromSeq introduces rewind from e index
+	FromSeq uint64
+	// maxAnchors represents max anchors to rewind
+	// by default, Rewind only rewinds to latest anchor
+	MaxAnchors uint8
+}
+
+type RewindBy func(*RewindOption)
+
+func WithRewindFromSeq(seq uint64) RewindBy {
+	return func(ro *RewindOption) {
+		ro.FromSeq = seq
+	}
+}
+
+func WithRewindMaxAnchors(n uint8) RewindBy {
+	return func(ro *RewindOption) {
+		ro.MaxAnchors = n
 	}
 }
