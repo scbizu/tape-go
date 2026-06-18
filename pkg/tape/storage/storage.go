@@ -44,6 +44,12 @@ func WithEntryId(eId string) SearchBy {
 	}
 }
 
+func WithSemanticPrompt(prompt string) SearchBy {
+	return func(so *SearchOption) {
+		so.semanticPrompt = prompt
+	}
+}
+
 type RewindOption struct {
 	// fromSeq introduces rewind from e index
 	FromSeq uint64
