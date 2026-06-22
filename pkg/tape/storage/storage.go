@@ -3,11 +3,14 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
+
+var ErrNoAnchor = errors.New("storage: no anchor")
 
 type EntryStorage interface {
 	Store(context.Context, entry.EntryLike) error

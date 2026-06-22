@@ -401,7 +401,7 @@ func (j *JSONL) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.Entr
 	if found > 0 {
 		return result, nil
 	}
-	return view.EntryRange{}, fmt.Errorf("jsonl: rewind: no anchor before seq %d", option.FromSeq)
+	return view.EntryRange{}, fmt.Errorf("jsonl: rewind: %w before seq %d", storage.ErrNoAnchor, option.FromSeq)
 }
 
 func (j *JSONL) rewindIndex(
