@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -41,8 +42,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if len(os.Args) > 1 && os.Args[1] == "chat" {
+	switch {
+	case len(os.Args) > 1 && os.Args[1] == "chat":
 		if err := runChat(ctx, apiKey); err != nil {
+			log.Fatal(err)
+		}
+		return
+	case len(os.Args) > 1 && os.Args[1] == "toolcall":
+		if err := runRewindDemo(ctx, apiKey); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -91,7 +98,7 @@ func runRewindDemo(ctx context.Context, apiKey string) error {
 		"Use rewind with max_anchors=1, then tell me which archived range it found.",
 		genai.RoleUser,
 	)
-	return runOnce(ctx, r, message)
+	return runToolCallE2E(ctx, r, message)
 }
 
 func runChat(ctx context.Context, apiKey string) error {
@@ -136,6 +143,10 @@ func newRunner(apiKey string, t *tape.Tape, instruction string) (*runner.Runner,
 	if err != nil {
 		return nil, err
 	}
+	bashTool, err := agenttools.NewBashTool(commands)
+	if err != nil {
+		return nil, err
+	}
 	model, err := ds.NewModel(apiKey, os.Getenv("DEEPSEEK_MODEL"))
 	if err != nil {
 		return nil, err
@@ -144,7 +155,7 @@ func newRunner(apiKey string, t *tape.Tape, instruction string) (*runner.Runner,
 		Name:                 "tape_demo_agent",
 		Model:                model,
 		Instruction:          instruction,
-		Tools:                []tool.Tool{handoffTool, rewindTool},
+		Tools:                []tool.Tool{bashTool, handoffTool, rewindTool},
 		BeforeModelCallbacks: []llmagent.BeforeModelCallback{adapter.ContextWindow},
 	}, tapeagent.WithCommandRegistry(commands))
 	if err != nil {
@@ -164,6 +175,37 @@ func runOnce(ctx context.Context, r *runner.Runner, message *genai.Content) erro
 			return err
 		}
 		printEvent(event.Content)
+	}
+	return nil
+}
+
+func runToolCallE2E(ctx context.Context, r *runner.Runner, message *genai.Content) error {
+	var sawCall, sawResponse, sawFinalText bool
+	for event, err := range r.Run(ctx, ownerID, sessionID, message, adkagent.RunConfig{}) {
+		if err != nil {
+			return err
+		}
+		printEvent(event.Content)
+		for _, part := range eventParts(event.Content) {
+			if part.FunctionCall != nil && part.FunctionCall.Name == "rewind" {
+				sawCall = true
+			}
+			if part.FunctionResponse != nil && part.FunctionResponse.Name == "rewind" {
+				sawResponse = true
+			}
+			if part.Text != "" && sawResponse {
+				sawFinalText = true
+			}
+		}
+	}
+	if !sawCall {
+		return errors.New("toolcall e2e: missing rewind tool call")
+	}
+	if !sawResponse {
+		return errors.New("toolcall e2e: missing rewind tool response")
+	}
+	if !sawFinalText {
+		return errors.New("toolcall e2e: missing final text after tool response")
 	}
 	return nil
 }
@@ -289,7 +331,7 @@ func writeEvent(w interface{ Write([]byte) (int, error) }, content *genai.Conten
 	if content == nil {
 		return
 	}
-	for _, part := range content.Parts {
+	for _, part := range eventParts(content) {
 		switch {
 		case part.FunctionCall != nil:
 			fmt.Fprintf(w, "tool call: %s %v\n", part.FunctionCall.Name, part.FunctionCall.Args)
@@ -299,4 +341,11 @@ func writeEvent(w interface{ Write([]byte) (int, error) }, content *genai.Conten
 			fmt.Fprintln(w, part.Text)
 		}
 	}
+}
+
+func eventParts(content *genai.Content) []*genai.Part {
+	if content == nil {
+		return nil
+	}
+	return content.Parts
 }

@@ -164,7 +164,7 @@ var _ Command = bashCommand{}
 type bashCommand struct{}
 
 type BashArgs struct {
-	Command string
+	Command string `json:"command" jsonschema:"Shell command to run."`
 }
 
 func BuiltinBashCommand() Command {

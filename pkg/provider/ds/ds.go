@@ -31,7 +31,7 @@ var _ model.LLM = (*Model)(nil)
 
 func NewModel(apiKey, modelName string, opts ...deepseek.Option) (*Model, error) {
 	if modelName == "" {
-		modelName = deepseek.DeepSeekV4Flash
+		modelName = deepseek.DeepSeekV4Pro
 	}
 	client, err := deepseek.NewClientWithOptions(apiKey, opts...)
 	if err != nil {
@@ -175,7 +175,33 @@ func buildRequest(modelName string, req *model.LLMRequest) (*deepseek.ChatComple
 		}
 		out.Messages = append(out.Messages, messages...)
 	}
+	out.Messages = validToolMessages(out.Messages)
 	return out, nil
+}
+
+func validToolMessages(messages []deepseek.ChatCompletionMessage) []deepseek.ChatCompletionMessage {
+	out := messages[:0]
+	var pending map[string]bool
+	for _, message := range messages {
+		if message.Role == deepseek.ChatMessageRoleTool {
+			if pending != nil && pending[message.ToolCallID] {
+				out = append(out, message)
+				delete(pending, message.ToolCallID)
+			}
+			continue
+		}
+		out = append(out, message)
+		pending = nil
+		if message.Role == deepseek.ChatMessageRoleAssistant && len(message.ToolCalls) > 0 {
+			pending = make(map[string]bool, len(message.ToolCalls))
+			for _, call := range message.ToolCalls {
+				if call.ID != "" {
+					pending[call.ID] = true
+				}
+			}
+		}
+	}
+	return out
 }
 
 func convertContent(content *genai.Content) ([]deepseek.ChatCompletionMessage, error) {

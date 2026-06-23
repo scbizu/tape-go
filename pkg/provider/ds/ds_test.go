@@ -119,3 +119,35 @@ func TestModelGenerateContentStream(t *testing.T) {
 		t.Fatalf("unexpected final response: %#v", final)
 	}
 }
+
+func TestBuildRequestKeepsMatchedToolResponse(t *testing.T) {
+	req, err := buildRequest("deepseek-test", &model.LLMRequest{Contents: []*genai.Content{
+		{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{
+			ID: "call-1", Name: "rewind", Args: map[string]any{"max_anchors": 1},
+		}}}},
+		{Role: genai.RoleUser, Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{
+			ID: "call-1", Name: "rewind", Response: map[string]any{"ok": true},
+		}}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Messages) != 2 || req.Messages[0].Role != deepseek.ChatMessageRoleAssistant || req.Messages[1].Role != deepseek.ChatMessageRoleTool {
+		t.Fatalf("unexpected messages: %#v", req.Messages)
+	}
+}
+
+func TestBuildRequestDropsDanglingToolResponse(t *testing.T) {
+	req, err := buildRequest("deepseek-test", &model.LLMRequest{Contents: []*genai.Content{
+		{Role: genai.RoleUser, Parts: []*genai.Part{{Text: "hi"}}},
+		{Role: genai.RoleUser, Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{
+			ID: "call-1", Name: "rewind", Response: map[string]any{"ok": true},
+		}}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Messages) != 1 || req.Messages[0].Role != deepseek.ChatMessageRoleUser {
+		t.Fatalf("unexpected messages: %#v", req.Messages)
+	}
+}
