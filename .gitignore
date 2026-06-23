@@ -1,2 +1,3 @@
 .worktrees/
 mise.local.toml
+e2e/config.toml
