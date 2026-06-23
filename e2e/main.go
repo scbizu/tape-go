@@ -74,7 +74,11 @@ func runRewindDemo(ctx context.Context, apiKey string) error {
 	)); err != nil {
 		return err
 	}
-	if err := t.HandOff(ctx, tape.WithHandoffSummary("Archived demo context")); err != nil {
+	commands := tapeagent.NewCommandRegistry(agenttools.NewHandoffCommand(t))
+	if _, err := commands.Command(ctx, nil, tapeagent.CommandCall{
+		Name: "handoff",
+		Args: agenttools.HandoffArgs{Summary: "Archived demo context"},
+	}); err != nil {
 		return err
 	}
 
@@ -119,7 +123,15 @@ func newRunner(apiKey string, t *tape.Tape, instruction string) (*runner.Runner,
 	if err != nil {
 		return nil, err
 	}
-	commands := tapeagent.NewCommandRegistry(tapeagent.BuiltinBashCommand(), agenttools.NewRewindCommand(t))
+	commands := tapeagent.NewCommandRegistry(
+		tapeagent.BuiltinBashCommand(),
+		agenttools.NewHandoffCommand(t),
+		agenttools.NewRewindCommand(t),
+	)
+	handoffTool, err := agenttools.NewHandoffTool(commands)
+	if err != nil {
+		return nil, err
+	}
 	rewindTool, err := agenttools.NewRewindTool(commands)
 	if err != nil {
 		return nil, err
@@ -132,7 +144,7 @@ func newRunner(apiKey string, t *tape.Tape, instruction string) (*runner.Runner,
 		Name:                 "tape_demo_agent",
 		Model:                model,
 		Instruction:          instruction,
-		Tools:                []tool.Tool{rewindTool},
+		Tools:                []tool.Tool{handoffTool, rewindTool},
 		BeforeModelCallbacks: []llmagent.BeforeModelCallback{adapter.ContextWindow},
 	}, tapeagent.WithCommandRegistry(commands))
 	if err != nil {

@@ -25,7 +25,7 @@ func TestRewindTool(t *testing.T) {
 		t.Fatal(err)
 	}
 	tape := &tape.Tape{TapeStorage: store, OwnerID: ownerID}
-	commands := tapeagent.NewCommandRegistry(NewRewindCommand(tape))
+	commands := tapeagent.NewCommandRegistry(NewHandoffCommand(tape), NewRewindCommand(tape))
 
 	tool, err := NewRewindTool(commands)
 	if err != nil {
@@ -42,9 +42,7 @@ func TestRewindTool(t *testing.T) {
 		)); err != nil {
 			t.Fatal(err)
 		}
-		if err := tape.HandOff(ctx); err != nil {
-			t.Fatal(err)
-		}
+		runHandoffCommand(t, commands, ctx, HandoffArgs{})
 	}
 	if err := tape.Store(ctx, entry.NewEntry(
 		entry.WithEntryKind(entry.EntryAssistant),

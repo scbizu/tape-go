@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage/jsonl"
+	"github.com/scbizu/tape-go/pkg/tape/view"
 	"github.com/spf13/afero"
 )
 
@@ -71,9 +73,14 @@ func TestTapeAdapterSessionAndContextWindow(t *testing.T) {
 	if err := adapter.AppendEvent(ctx, created.Session, event); err != nil {
 		t.Fatal(err)
 	}
-	if err := adapter.Tape.HandOff(ctx); err != nil {
+	payload, err := json.Marshal(entry.HandoffAnchor{SeqS: 1, SeqE: 2})
+	if err != nil {
 		t.Fatal(err)
 	}
+	if err := adapter.Tape.Store(ctx, entry.NewAnchor(2, ownerID, entry.AnchorKindHandoff, payload)); err != nil {
+		t.Fatal(err)
+	}
+	adapter.Tape.SetView(view.EntryRange{SeqS: 3})
 	event = session.NewEvent("invocation-b")
 	event.Author = owner.SystemAgent
 	event.Timestamp = agentTimestamp

@@ -16,6 +16,7 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
+// RewindArgs configures which handoff anchor range rewind should return.
 type RewindArgs struct {
 	FromSeq    uint64 `json:"from_seq,omitempty" jsonschema:"Entry sequence to rewind from; zero means the latest entry."`
 	MaxAnchors uint8  `json:"max_anchors,omitempty" jsonschema:"Maximum anchors to rewind; zero defaults to one."`
@@ -25,6 +26,7 @@ type rewindCommand struct {
 	tape *tape.Tape
 }
 
+// NewRewindCommand returns a command that finds earlier context windows from t.
 func NewRewindCommand(t *tape.Tape) tapeagent.Command {
 	return rewindCommand{tape: t}
 }
@@ -66,6 +68,7 @@ func (c rewindCommand) Run(ctx context.Context, _ tapeagent.AgentIO, call tapeag
 	return tapeagent.CommandResult{Data: r}, nil
 }
 
+// NewRewindTool adapts the rewind command for ADK function calls.
 func NewRewindTool(commands tapeagent.CommandRunner) (tool.Tool, error) {
 	if commands == nil {
 		return nil, errors.New("agent: nil command runner")

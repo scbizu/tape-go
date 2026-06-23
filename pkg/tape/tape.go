@@ -86,6 +86,11 @@ func (t *Tape) Close() error {
 	return nil
 }
 
+func (t *Tape) SetView(r view.EntryRange) {
+	t.View = r
+	t.resetReadState()
+}
+
 func (t *Tape) context() context.Context {
 	return owner.WithOwnerId(context.Background(), t.OwnerID)
 }
