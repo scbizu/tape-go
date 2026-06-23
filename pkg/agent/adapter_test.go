@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -14,9 +15,28 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage/jsonl"
-	"github.com/scbizu/tape-go/pkg/tape/view"
 	"github.com/spf13/afero"
 )
+
+type bufferIO struct {
+	bytes.Buffer
+}
+
+func (*bufferIO) Close() error { return nil }
+
+func TestBuiltinBashCommand(t *testing.T) {
+	runtime := &Runtime{commands: NewCommandRegistry(BuiltinBashCommand())}
+	out := &bufferIO{}
+	if _, err := runtime.Command(context.Background(), out, CommandCall{
+		Name: "bash",
+		Args: BashArgs{Command: "printf hello"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != "hello" {
+		t.Fatalf("bash output = %q, want hello", got)
+	}
+}
 
 func TestTapeAdapterSessionAndContextWindow(t *testing.T) {
 	ownerID := owner.UserID("owner-a")
@@ -83,109 +103,6 @@ func TestTapeAdapterSessionAndContextWindow(t *testing.T) {
 	}
 	if len(req.Contents) != 1 || req.Contents[0].Parts[0].Text != "current" {
 		t.Fatalf("context window mismatch: %#v", req.Contents)
-	}
-}
-
-func TestTapeAdapterRewindTool(t *testing.T) {
-	ownerID := owner.UserID("owner-a")
-	store, err := jsonl.NewJSONLStorage("session-a", "/tapes")
-	if err != nil {
-		t.Fatal(err)
-	}
-	store.Fs = afero.NewMemMapFs()
-	ctx := owner.WithOwnerId(context.Background(), ownerID)
-	if err := store.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-	tape := &tape.Tape{TapeStorage: store, OwnerID: ownerID}
-	adapter, err := NewTapeAdapter(tape, "app-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	tool, err := adapter.RewindTool()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tool.Name() != "rewind" {
-		t.Fatalf("tool name = %q, want rewind", tool.Name())
-	}
-
-	for _, text := range []string{"first", "second"} {
-		if err := tape.Store(ctx, entry.NewEntry(
-			entry.WithEntryKind(entry.EntryUser),
-			entry.WithEntryContent(text),
-		)); err != nil {
-			t.Fatal(err)
-		}
-		if err := tape.HandOff(ctx); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tape.Store(ctx, entry.NewEntry(
-		entry.WithEntryKind(entry.EntryAssistant),
-		entry.WithEntryContent("current"),
-	)); err != nil {
-		t.Fatal(err)
-	}
-
-	viewBefore := tape.View
-	got, err := adapter.rewind(ctx, rewindArgs{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != (view.EntryRange{SeqS: 3, SeqE: 4}) {
-		t.Fatalf("default rewind = %#v, want [3,4)", got)
-	}
-	got, err = adapter.rewind(ctx, rewindArgs{MaxAnchors: 2})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != (view.EntryRange{SeqS: 1, SeqE: 4}) {
-		t.Fatalf("two-anchor rewind = %#v, want [1,4)", got)
-	}
-	got, err = adapter.rewind(ctx, rewindArgs{FromSeq: 2, MaxAnchors: 2})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != (view.EntryRange{SeqS: 1, SeqE: 2}) {
-		t.Fatalf("rewind from seq 2 = %#v, want [1,2)", got)
-	}
-	if tape.View != viewBefore {
-		t.Fatalf("rewind changed tape view: got %#v, want %#v", tape.View, viewBefore)
-	}
-
-	req := &model.LLMRequest{}
-	if _, err := adapter.ContextWindow(nil, req); err != nil {
-		t.Fatal(err)
-	}
-	if len(req.Contents) != 1 || req.Contents[0].Parts[0].Text != "current" {
-		t.Fatalf("context window mismatch after rewind: %#v", req.Contents)
-	}
-}
-
-func TestTapeAdapterRewindWithoutAnchor(t *testing.T) {
-	ownerID := owner.UserID("owner-a")
-	store, err := jsonl.NewJSONLStorage("session-a", "/tapes")
-	if err != nil {
-		t.Fatal(err)
-	}
-	store.Fs = afero.NewMemMapFs()
-	ctx := owner.WithOwnerId(context.Background(), ownerID)
-	if err := store.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-	adapter, err := NewTapeAdapter(&tape.Tape{TapeStorage: store, OwnerID: ownerID}, "app-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := adapter.rewind(ctx, rewindArgs{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != (view.EntryRange{}) {
-		t.Fatalf("rewind without anchor = %#v, want empty range", got)
 	}
 }
 

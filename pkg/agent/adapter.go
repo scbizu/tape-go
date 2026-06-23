@@ -19,8 +19,6 @@ import (
 	"google.golang.org/adk/memory"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
 
 	"github.com/scbizu/tape-go/pkg/tape"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
@@ -176,32 +174,6 @@ func (a *TapeAdapter) SearchMemory(ctx context.Context, req *memory.SearchReques
 		})
 	}
 	return result, nil
-}
-
-type rewindArgs struct {
-	FromSeq    uint64 `json:"from_seq,omitempty" jsonschema:"Entry sequence to rewind from; zero means the latest entry."`
-	MaxAnchors uint8  `json:"max_anchors,omitempty" jsonschema:"Maximum anchors to rewind; zero defaults to one."`
-}
-
-func (a *TapeAdapter) RewindTool() (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "rewind",
-		Description: "Returns an earlier context window range referenced by tape anchors.",
-	}, func(ctx tool.Context, args rewindArgs) (view.EntryRange, error) {
-		return a.rewind(ctx, args)
-	})
-}
-
-func (a *TapeAdapter) rewind(ctx context.Context, args rewindArgs) (view.EntryRange, error) {
-	r, err := a.Tape.Rewind(
-		a.tapeContext(ctx),
-		storage.WithRewindFromSeq(args.FromSeq),
-		storage.WithRewindMaxAnchors(args.MaxAnchors),
-	)
-	if errors.Is(err, storage.ErrNoAnchor) {
-		return view.EntryRange{}, nil
-	}
-	return r, err
 }
 
 // ContextWindow replaces ADK's model contents with the Tape's active view.

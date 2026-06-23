@@ -21,6 +21,7 @@ import (
 	"google.golang.org/adk/tool"
 
 	tapeagent "github.com/scbizu/tape-go/pkg/agent"
+	agenttools "github.com/scbizu/tape-go/pkg/agent/tools"
 	"github.com/scbizu/tape-go/pkg/provider/ds"
 	"github.com/scbizu/tape-go/pkg/tape"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
@@ -118,7 +119,8 @@ func newRunner(apiKey string, t *tape.Tape, instruction string) (*runner.Runner,
 	if err != nil {
 		return nil, err
 	}
-	rewindTool, err := adapter.RewindTool()
+	commands := tapeagent.NewCommandRegistry(tapeagent.BuiltinBashCommand(), agenttools.NewRewindCommand(t))
+	rewindTool, err := agenttools.NewRewindTool(commands)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +134,7 @@ func newRunner(apiKey string, t *tape.Tape, instruction string) (*runner.Runner,
 		Instruction:          instruction,
 		Tools:                []tool.Tool{rewindTool},
 		BeforeModelCallbacks: []llmagent.BeforeModelCallback{adapter.ContextWindow},
-	})
+	}, tapeagent.WithCommandRegistry(commands))
 	if err != nil {
 		return nil, err
 	}
