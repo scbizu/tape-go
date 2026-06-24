@@ -3,12 +3,14 @@ package jsonl
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/scbizu/tape-go/pkg/llm"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
@@ -456,6 +458,149 @@ func TestJSONLRangeRejectsInvalidRange(t *testing.T) {
 	}
 }
 
+func TestJSONLCallbackRequiresSemanticIndex(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewJSONLStorage("session-a", "/tapes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Fs = afero.NewMemMapFs()
+	ctx := owner.WithOwnerId(context.Background(), "owner-a")
+	if err := store.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Callback(ctx, "query", 1); err == nil {
+		t.Fatal("Callback without model: want error")
+	}
+
+	disabled, err := NewJSONLStorage("session-a", "/tapes-disabled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled.Fs = afero.NewMemMapFs()
+	model := &fakeSemanticModel{enabled: false}
+	ctx = llm.WithModel(owner.WithOwnerId(context.Background(), "owner-a"), model)
+	if err := disabled.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := disabled.Callback(ctx, "query", 1); err == nil {
+		t.Fatal("Callback with disabled model: want error")
+	}
+}
+
+func TestJSONLCallbackReranksSemanticMatches(t *testing.T) {
+	t.Parallel()
+
+	model := &fakeSemanticModel{
+		enabled: true,
+		vectors: map[string][]float32{
+			"query": {1, 0},
+			"near":  {1, 0},
+			"also":  {1, 0},
+			"far":   {0, 1},
+		},
+		reranked: []string{"also", "near"},
+	}
+	store, ctx := newSemanticStore(t, model, "/tapes")
+	for _, text := range []string{"near", "also", "far"} {
+		if err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent(text))); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := store.Callback(ctx, "query", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Callback views len: want 2, got %d", len(got))
+	}
+	if got[0].Raw[0].GetSummary() != "also" || got[1].Raw[0].GetSummary() != "near" {
+		t.Fatalf("Callback rerank order mismatch: got %q, %q", got[0].Raw[0].GetSummary(), got[1].Raw[0].GetSummary())
+	}
+}
+
+func TestJSONLCallbackReturnsHandoffAnchorRange(t *testing.T) {
+	t.Parallel()
+
+	model := &fakeSemanticModel{
+		enabled: true,
+		vectors: map[string][]float32{
+			"archive": {1, 0},
+			"old":     {0, 1},
+			"new":     {0, 1},
+		},
+	}
+	store, ctx := newSemanticStore(t, model, "/tapes")
+	if err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent("old"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent("new"))); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(entry.HandoffAnchor{Summary: "archive", SeqS: 1, SeqE: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Store(ctx, entry.NewAnchor(0, "owner-a", entry.AnchorKindHandoff, payload)); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.Callback(ctx, "archive", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || len(got[0].Raw) != 2 {
+		t.Fatalf("Callback handoff range mismatch: views=%d raw=%v", len(got), got)
+	}
+	if got[0].Raw[0].GetSummary() != "old" || got[0].Raw[1].GetSummary() != "new" {
+		t.Fatalf("Callback handoff entries mismatch: %#v", got[0].Raw)
+	}
+}
+
+func TestJSONLSearchUsesCallback(t *testing.T) {
+	t.Parallel()
+
+	model := &fakeSemanticModel{
+		enabled: true,
+		vectors: map[string][]float32{
+			"query": {1, 0},
+			"hit":   {1, 0},
+		},
+	}
+	store, ctx := newSemanticStore(t, model, "/tapes")
+	if err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent("hit"))); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.Search(ctx, storage.WithSemanticPrompt("query"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Raw) != 1 || got.Raw[0].GetSummary() != "hit" {
+		t.Fatalf("Search semantic mismatch: %#v", got.Raw)
+	}
+}
+
+func TestJSONLCallbackReturnsReRankError(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("rerank failed")
+	model := &fakeSemanticModel{
+		enabled:   true,
+		vectors:   map[string][]float32{"query": {1, 0}, "hit": {1, 0}},
+		rerankErr: want,
+	}
+	store, ctx := newSemanticStore(t, model, "/tapes")
+	if err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent("hit"))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Callback(ctx, "query", 1); !errors.Is(err, want) {
+		t.Fatalf("Callback rerank error: want %v, got %v", want, err)
+	}
+}
+
 func mustOwnerState(t *testing.T, store *JSONL, ownerID string) *ownerJSONL {
 	t.Helper()
 	value, ok := store.Owners.Load(ownerID)
@@ -463,4 +608,46 @@ func mustOwnerState(t *testing.T, store *JSONL, ownerID string) *ownerJSONL {
 		t.Fatalf("owner state %q not found", ownerID)
 	}
 	return value.(*ownerJSONL)
+}
+
+func newSemanticStore(t *testing.T, model *fakeSemanticModel, path string) (*JSONL, context.Context) {
+	t.Helper()
+	store, err := NewJSONLStorage("session-a", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Fs = afero.NewMemMapFs()
+	ctx := llm.WithModel(owner.WithOwnerId(context.Background(), "owner-a"), model)
+	if err := store.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return store, ctx
+}
+
+type fakeSemanticModel struct {
+	enabled   bool
+	vectors   map[string][]float32
+	reranked  []string
+	rerankErr error
+}
+
+func (m *fakeSemanticModel) IsEnable() bool {
+	return m.enabled
+}
+
+func (m *fakeSemanticModel) Embedding(_ context.Context, text string) ([]float32, error) {
+	if v, ok := m.vectors[text]; ok {
+		return v, nil
+	}
+	return []float32{0, 1}, nil
+}
+
+func (m *fakeSemanticModel) ReRank(_ context.Context, _ string, candidates []string) ([]string, error) {
+	if m.rerankErr != nil {
+		return nil, m.rerankErr
+	}
+	if m.reranked != nil {
+		return m.reranked, nil
+	}
+	return candidates, nil
 }

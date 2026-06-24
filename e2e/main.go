@@ -27,6 +27,8 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
+	"github.com/scbizu/tape-go/pkg/tape/storage"
+	bboltstore "github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	"github.com/scbizu/tape-go/pkg/tape/storage/jsonl"
 )
 
@@ -36,6 +38,11 @@ const (
 	sessionID = "demo-session"
 )
 
+type storageBackend struct {
+	name string
+	new  func(context.Context, string) (storage.TapeStorage, error)
+}
+
 func main() {
 	ctx := owner.WithOwnerId(context.Background(), ownerID)
 	apiKey, err := deepSeekAPIKey(configPath())
@@ -44,7 +51,11 @@ func main() {
 	}
 	switch {
 	case len(os.Args) > 1 && os.Args[1] == "chat":
-		if err := runChat(ctx, apiKey); err != nil {
+		backend := backendByName("jsonl")
+		if len(os.Args) > 2 {
+			backend = backendByName(os.Args[2])
+		}
+		if err := runChat(ctx, apiKey, backend); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -60,20 +71,27 @@ func main() {
 }
 
 func runRewindDemo(ctx context.Context, apiKey string) error {
+	for _, backend := range e2eBackends() {
+		fmt.Printf("backend: %s\n", backend.name)
+		if err := runRewindDemoWithBackend(ctx, apiKey, backend); err != nil {
+			return fmt.Errorf("%s backend: %w", backend.name, err)
+		}
+	}
+	return nil
+}
+
+func runRewindDemoWithBackend(ctx context.Context, apiKey string, backend storageBackend) error {
 	dir, err := os.MkdirTemp("", "tape-go-e2e-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
 
-	store, err := jsonl.NewJSONLStorage(sessionID, dir)
+	t, err := newTape(ctx, backend, dir)
 	if err != nil {
 		return err
 	}
-	if err := store.Init(ctx); err != nil {
-		return err
-	}
-	t := &tape.Tape{TapeStorage: store, OwnerID: ownerID}
+	defer t.Close()
 
 	if err := t.Store(ctx, entry.NewEntry(
 		entry.WithEntryKind(entry.EntryUser),
@@ -101,21 +119,19 @@ func runRewindDemo(ctx context.Context, apiKey string) error {
 	return runToolCallE2E(ctx, r, message)
 }
 
-func runChat(ctx context.Context, apiKey string) error {
+func runChat(ctx context.Context, apiKey string, backend storageBackend) error {
 	dir, err := os.MkdirTemp("", "tape-go-chat-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
 
-	store, err := jsonl.NewJSONLStorage(sessionID, dir)
+	t, err := newTape(ctx, backend, dir)
 	if err != nil {
 		return err
 	}
-	if err := store.Init(ctx); err != nil {
-		return err
-	}
-	t := &tape.Tape{TapeStorage: store, OwnerID: ownerID}
+	defer t.Close()
+
 	r, err := newRunner(apiKey, t, "You are a concise CLI assistant. Use rewind when older tape context is needed.")
 	if err != nil {
 		return err
@@ -123,6 +139,44 @@ func runChat(ctx context.Context, apiKey string) error {
 
 	_, err = tea.NewProgram(newChatUI(ctx, r)).Run()
 	return err
+}
+
+func newTape(ctx context.Context, backend storageBackend, dir string) (*tape.Tape, error) {
+	store, err := backend.new(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.Init(ctx); err != nil {
+		return nil, err
+	}
+	return &tape.Tape{TapeStorage: store, OwnerID: ownerID}, nil
+}
+
+func e2eBackends() []storageBackend {
+	return []storageBackend{
+		{
+			name: "jsonl",
+			new: func(_ context.Context, dir string) (storage.TapeStorage, error) {
+				return jsonl.NewJSONLStorage(sessionID, dir)
+			},
+		},
+		{
+			name: "bbolt",
+			new: func(_ context.Context, dir string) (storage.TapeStorage, error) {
+				return bboltstore.NewBboltStorage(sessionID, filepath.Join(dir, "tape.db"))
+			},
+		},
+	}
+}
+
+func backendByName(name string) storageBackend {
+	for _, backend := range e2eBackends() {
+		if backend.name == name {
+			return backend
+		}
+	}
+	log.Fatalf("unknown backend %q", name)
+	return storageBackend{}
 }
 
 func newRunner(apiKey string, t *tape.Tape, instruction string) (*runner.Runner, error) {

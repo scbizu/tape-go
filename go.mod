@@ -6,6 +6,7 @@ require (
 	github.com/cohesion-org/deepseek-go v1.4.0
 	github.com/simonfrey/jsonl v0.0.0-20240904112901-935399b9a740
 	github.com/spf13/afero v1.15.0
+	go.etcd.io/bbolt v1.5.0
 	google.golang.org/adk v1.4.0
 	google.golang.org/genai v1.57.0
 )
@@ -40,7 +41,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/net v0.54.0 // indirect
-	golang.org/x/sys v0.44.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	google.golang.org/api v0.279.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260511170946-3700d4141b60 // indirect
