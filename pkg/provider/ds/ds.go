@@ -14,6 +14,8 @@ import (
 	deepseek "github.com/cohesion-org/deepseek-go"
 	"google.golang.org/genai"
 
+	"github.com/scbizu/tape-go/pkg/llm"
+
 	"google.golang.org/adk/model"
 )
 
@@ -28,6 +30,9 @@ type Model struct {
 }
 
 var _ model.LLM = (*Model)(nil)
+var _ llm.Model = (*Model)(nil)
+
+var ErrEmbeddingUnsupported = errors.New("ds: embedding is not supported")
 
 func NewModel(apiKey, modelName string, opts ...deepseek.Option) (*Model, error) {
 	if modelName == "" {
@@ -41,6 +46,55 @@ func NewModel(apiKey, modelName string, opts ...deepseek.Option) (*Model, error)
 }
 
 func (m *Model) Name() string { return m.name }
+
+func (m *Model) IsEnable() bool {
+	return m != nil && m.client != nil && m.name != ""
+}
+
+func (m *Model) Embedding(context.Context, string) ([]float32, error) {
+	return nil, ErrEmbeddingUnsupported
+}
+
+func (m *Model) ReRank(ctx context.Context, query string, candidates []string) ([]string, error) {
+	if query == "" {
+		return nil, errors.New("ds: empty rerank query")
+	}
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	if !m.IsEnable() {
+		return nil, errors.New("ds: model is not enabled")
+	}
+	body, err := json.Marshal(struct {
+		Query      string   `json:"query"`
+		Candidates []string `json:"candidates"`
+	}{Query: query, Candidates: candidates})
+	if err != nil {
+		return nil, fmt.Errorf("ds: encode rerank request: %w", err)
+	}
+	resp, err := m.client.CreateChatCompletion(ctx, &deepseek.ChatCompletionRequest{
+		Model: m.name,
+		Messages: []deepseek.ChatCompletionMessage{
+			{
+				Role: deepseek.ChatMessageRoleSystem,
+				Content: "You rerank candidates for a search query. Return JSON only: " +
+					`{"order":[candidate_indexes_in_best_to_worst_order]}. ` +
+					"Use zero-based indexes. Include every candidate exactly once.",
+			},
+			{Role: deepseek.ChatMessageRoleUser, Content: string(body)},
+		},
+		ResponseFormat: &deepseek.ResponseFormat{Type: "json_object"},
+		Temperature:    0,
+		MaxTokens:      1024,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ds: rerank: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return nil, errors.New("ds: rerank empty response")
+	}
+	return rerankByOrder(candidates, resp.Choices[0].Message.Content)
+}
 
 func (m *Model) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
@@ -469,4 +523,28 @@ func finishReason(reason string) genai.FinishReason {
 	default:
 		return genai.FinishReasonOther
 	}
+}
+
+func rerankByOrder(candidates []string, content string) ([]string, error) {
+	var payload struct {
+		Order []int `json:"order"`
+	}
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		return nil, fmt.Errorf("ds: decode rerank response: %w", err)
+	}
+	out := make([]string, 0, len(candidates))
+	used := make([]bool, len(candidates))
+	for _, index := range payload.Order {
+		if index < 0 || index >= len(candidates) || used[index] {
+			continue
+		}
+		out = append(out, candidates[index])
+		used[index] = true
+	}
+	for index, candidate := range candidates {
+		if !used[index] {
+			out = append(out, candidate)
+		}
+	}
+	return out, nil
 }

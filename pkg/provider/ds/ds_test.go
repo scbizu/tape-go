@@ -2,6 +2,7 @@ package ds
 
 import (
 	"context"
+	"errors"
 	"io"
 	"testing"
 
@@ -117,6 +118,31 @@ func TestModelGenerateContentStream(t *testing.T) {
 	final := responses[2]
 	if final.Partial || !final.TurnComplete || final.Content.Parts[0].Text != "hello" || final.UsageMetadata.TotalTokenCount != 2 {
 		t.Fatalf("unexpected final response: %#v", final)
+	}
+}
+
+func TestModelReRank(t *testing.T) {
+	client := &fakeClient{response: &deepseek.ChatCompletionResponse{
+		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: `{"order":[2,0]}`}}},
+	}}
+	llm := &Model{client: client, name: "deepseek-test"}
+
+	got, err := llm.ReRank(context.Background(), "query", []string{"near", "far", "best"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.request == nil || client.request.ResponseFormat == nil || client.request.ResponseFormat.Type != "json_object" {
+		t.Fatalf("unexpected rerank request: %#v", client.request)
+	}
+	if len(got) != 3 || got[0] != "best" || got[1] != "near" || got[2] != "far" {
+		t.Fatalf("unexpected rerank result: %#v", got)
+	}
+}
+
+func TestModelEmbeddingUnsupported(t *testing.T) {
+	llm := &Model{client: &fakeClient{}, name: "deepseek-test"}
+	if _, err := llm.Embedding(context.Background(), "text"); !errors.Is(err, ErrEmbeddingUnsupported) {
+		t.Fatalf("Embedding error: want ErrEmbeddingUnsupported, got %v", err)
 	}
 }
 
