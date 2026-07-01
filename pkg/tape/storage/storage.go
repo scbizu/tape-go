@@ -15,8 +15,6 @@ var ErrNoAnchor = errors.New("storage: no anchor")
 type EntryStorage interface {
 	Store(context.Context, entry.EntryLike) error
 	Range(context.Context, view.EntryRange, ...RangeBy) (view.EntryView, error)
-	// Search is a more abstracted `Range`
-	Search(context.Context, ...SearchBy) (view.EntryView, error)
 }
 
 type TapeStorage interface {
@@ -44,51 +42,6 @@ type RangeBy func(*RangeOption)
 func WithRangeAfter(after time.Time) RangeBy {
 	return func(option *RangeOption) {
 		option.After = after
-	}
-}
-
-type SearchOption struct {
-	// eId denotes for entry id or `seq` in most of our codebase
-	// It is the simple but the most stable search mechanism to get entry data
-	eId uint64
-	// semanticText here mainly denotes for embedding search
-	// It works together with entry/anchor `summary`
-	semanticText string
-	// fullText here mainly denotes for fulltext search mechanism
-	// It maybe efficient and cache-friendly for some scenarios that data was less-modified like coding-agent
-	// According to [tomiya's Obelisk](https://github.com/tommy0103/obelisk) Research.
-	fullText string
-}
-
-func (so SearchOption) GetEntryId() uint64 {
-	return so.eId
-}
-
-func (so SearchOption) GetSemanticText() string {
-	return so.semanticText
-}
-
-func (so SearchOption) GetFullText() string {
-	return so.fullText
-}
-
-type SearchBy func(*SearchOption)
-
-func WithEntryId(eId uint64) SearchBy {
-	return func(so *SearchOption) {
-		so.eId = eId
-	}
-}
-
-func WithSemanticPrompt(text string) SearchBy {
-	return func(so *SearchOption) {
-		so.semanticText = text
-	}
-}
-
-func WithFullText(fullText string) SearchBy {
-	return func(so *SearchOption) {
-		so.fullText = fullText
 	}
 }
 

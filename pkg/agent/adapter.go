@@ -22,6 +22,7 @@ import (
 
 	"github.com/scbizu/tape-go/pkg/tape"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
+	"github.com/scbizu/tape-go/pkg/tape/finder"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
@@ -151,7 +152,7 @@ func (a *TapeAdapter) SearchMemory(ctx context.Context, req *memory.SearchReques
 	if err := a.validateIdentity(ctx, req.AppName, req.UserID, ""); err != nil {
 		return nil, err
 	}
-	entries, err := a.Tape.Search(a.tapeContext(ctx), storage.WithSemanticPrompt(req.Query))
+	entries, err := finder.SemanticPrompt(req.Query).Find(a.tapeContext(ctx), a.Tape)
 	if err != nil {
 		return nil, err
 	}

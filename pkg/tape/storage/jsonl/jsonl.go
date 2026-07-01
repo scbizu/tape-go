@@ -9,16 +9,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/scbizu/tape-go/pkg/llm"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
+	"github.com/scbizu/tape-go/pkg/tape/finder"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
@@ -59,7 +59,7 @@ type ownerJSONL struct {
 	lastTimestamp  time.Time
 	indexes        []JSONLIndex
 	semanticModel  llm.Model
-	semanticIndex  []semanticIndexItem
+	semanticIndex  []finder.SemanticItem
 	semanticEnable bool
 }
 
@@ -69,12 +69,6 @@ type JSONL struct {
 	Owners          sync.Map // OwnerId -> *ownerJSONL
 	localPathPrefix string
 	sessionId       string
-}
-
-type semanticIndexItem struct {
-	Summary   string
-	Embedding []float32
-	Scope     view.EntryRange
 }
 
 var LINE_EOF = -1
@@ -529,131 +523,31 @@ func decodeEntry(decoder *json.Decoder) (entry.EntryLike, error) {
 	return e, nil
 }
 
-func (j *JSONL) Search(
-	ctx context.Context,
-	opts ...storage.SearchBy,
-) (view.EntryView, error) {
-	var option storage.SearchOption
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&option)
-		}
-	}
-	if option.GetEntryId() > 0 {
-		return j.Range(ctx, view.EntryRange{
-			SeqS: option.GetEntryId(),
-			SeqE: option.GetEntryId() + 1,
-		})
-	}
-	if option.GetSemanticText() != "" {
-		views, err := j.Callback(ctx, option.GetSemanticText(), 3)
-		if err != nil {
-			return view.EntryView{}, err
-		}
-		ownerID, state, err := j.ownerState(ctx, false)
-		if err != nil {
-			return view.EntryView{}, fmt.Errorf("jsonl: %w", err)
-		}
-		out := view.EntryView{
-			SessionId: state.sessionId,
-			Owner:     ownerID,
-		}
-		for i, entryView := range views {
-			if i == 0 || entryView.Scope.SeqS < out.Scope.SeqS {
-				out.Scope.SeqS = entryView.Scope.SeqS
-			}
-			if entryView.Scope.SeqE > out.Scope.SeqE {
-				out.Scope.SeqE = entryView.Scope.SeqE
-			}
-			out.Raw = append(out.Raw, entryView.Raw...)
-		}
-		return out, nil
-	}
-	if option.GetFullText() != "" {
-		return view.EntryView{}, errors.New("jsonl: full text for jsonl storage is too slow, we don't recommend to do so.")
-	}
-	return view.EntryView{}, errors.New("jsonl: unsupported search option")
-}
-
-// Callback callbacks multiple views
-func (j *JSONL) Callback(
-	ctx context.Context,
-	semanticText string,
-	topK int,
-) ([]view.EntryView, error) {
-	if semanticText == "" {
-		return nil, errors.New("jsonl: empty semantic text")
-	}
-	if topK <= 0 {
-		return nil, errors.New("jsonl: invalid topK")
-	}
+func (j *JSONL) SemanticIndex(ctx context.Context) (finder.SemanticIndex, error) {
 	_, state, err := j.ownerState(ctx, false)
 	if err != nil {
-		return nil, fmt.Errorf("jsonl: %w", err)
+		return finder.SemanticIndex{}, fmt.Errorf("jsonl: %w", err)
 	}
 
 	state.RLock()
 	model := state.semanticModel
 	enabled := state.semanticEnable && model != nil && model.IsEnable()
-	items := append([]semanticIndexItem(nil), state.semanticIndex...)
+	items := slices.Clone(state.semanticIndex)
 	state.RUnlock()
 	if !enabled {
-		return nil, errors.New("jsonl: semantic index is not enabled")
+		return finder.SemanticIndex{}, errors.New("jsonl: semantic index is not enabled")
 	}
-	if len(items) == 0 {
-		return nil, nil
-	}
-
-	query, err := model.Embedding(ctx, semanticText)
-	if err != nil {
-		return nil, fmt.Errorf("jsonl: embedding query: %w", err)
-	}
-	candidates := topSemanticItems(query, items, topK)
-	if len(candidates) == 0 {
-		return nil, nil
-	}
-
-	summaries := make([]string, 0, len(candidates))
-	bySummary := make(map[string][]semanticIndexItem, len(candidates))
-	for _, candidate := range candidates {
-		summaries = append(summaries, candidate.Summary)
-		bySummary[candidate.Summary] = append(bySummary[candidate.Summary], candidate)
-	}
-	ranked, err := model.ReRank(ctx, semanticText, summaries)
-	if err != nil {
-		return nil, fmt.Errorf("jsonl: rerank: %w", err)
-	}
-
-	out := make([]view.EntryView, 0, len(ranked))
-	used := 0
-	for _, summary := range ranked {
-		queue := bySummary[summary]
-		if len(queue) == 0 {
-			continue
-		}
-		candidate := queue[0]
-		bySummary[summary] = queue[1:]
-		ev, err := j.Range(ctx, candidate.Scope)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, ev)
-		used++
-		if used == topK {
-			break
-		}
-	}
-	return out, nil
+	return finder.SemanticIndex{Model: model, Items: items}, nil
 }
 
-func (j *JSONL) semanticIndexForPath(ctx context.Context, model llm.Model, path string) ([]semanticIndexItem, error) {
+func (j *JSONL) semanticIndexForPath(ctx context.Context, model llm.Model, path string) ([]finder.SemanticItem, error) {
 	fd, err := j.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	defer fd.Close()
 
-	var items []semanticIndexItem
+	var items []finder.SemanticItem
 	decoder := json.NewDecoder(fd)
 	for {
 		if err := ctx.Err(); err != nil {
@@ -673,9 +567,9 @@ func (j *JSONL) semanticIndexForPath(ctx context.Context, model llm.Model, path 
 	}
 }
 
-func semanticItem(ctx context.Context, model llm.Model, e entry.EntryLike) (semanticIndexItem, bool) {
+func semanticItem(ctx context.Context, model llm.Model, e entry.EntryLike) (finder.SemanticItem, bool) {
 	if model == nil {
-		return semanticIndexItem{}, false
+		return finder.SemanticItem{}, false
 	}
 	summary := e.GetSummary()
 	scope := view.EntryRange{SeqS: e.GetID(), SeqE: e.GetID() + 1}
@@ -687,54 +581,11 @@ func semanticItem(ctx context.Context, model llm.Model, e entry.EntryLike) (sema
 		}
 	}
 	if summary == "" {
-		return semanticIndexItem{}, false
+		return finder.SemanticItem{}, false
 	}
 	embedding, err := model.Embedding(ctx, summary)
 	if err != nil || len(embedding) == 0 {
-		return semanticIndexItem{}, false
+		return finder.SemanticItem{}, false
 	}
-	return semanticIndexItem{Summary: summary, Embedding: embedding, Scope: scope}, true
-}
-
-func topSemanticItems(query []float32, items []semanticIndexItem, topK int) []semanticIndexItem {
-	type scoredItem struct {
-		item  semanticIndexItem
-		score float64
-	}
-	scored := make([]scoredItem, 0, len(items))
-	for _, item := range items {
-		score, ok := cosine(query, item.Embedding)
-		if ok {
-			scored = append(scored, scoredItem{item: item, score: score})
-		}
-	}
-	sort.Slice(scored, func(i, j int) bool {
-		return scored[i].score > scored[j].score
-	})
-	if len(scored) > topK {
-		scored = scored[:topK]
-	}
-	out := make([]semanticIndexItem, 0, len(scored))
-	for _, item := range scored {
-		out = append(out, item.item)
-	}
-	return out
-}
-
-func cosine(a, b []float32) (float64, bool) {
-	if len(a) == 0 || len(a) != len(b) {
-		return 0, false
-	}
-	var dot, normA, normB float64
-	for i := range a {
-		av := float64(a[i])
-		bv := float64(b[i])
-		dot += av * bv
-		normA += av * av
-		normB += bv * bv
-	}
-	if normA == 0 || normB == 0 {
-		return 0, false
-	}
-	return dot / (math.Sqrt(normA) * math.Sqrt(normB)), true
+	return finder.SemanticItem{Summary: summary, Embedding: embedding, Scope: scope}, true
 }
