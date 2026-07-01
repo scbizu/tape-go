@@ -191,30 +191,6 @@ func TestBboltRewind(t *testing.T) {
 	}
 }
 
-func TestBboltSearch(t *testing.T) {
-	t.Parallel()
-
-	store, ctx := newStore(t, "owner-a", "session-a")
-	defer store.Close()
-
-	if err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent("hit"))); err != nil {
-		t.Fatal(err)
-	}
-	got, err := store.Search(ctx, storage.WithEntryId(1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Raw) != 1 || got.Raw[0].GetSummary() != "hit" {
-		t.Fatalf("entry search mismatch: %#v", got.Raw)
-	}
-	if _, err := store.Search(ctx, storage.WithSemanticPrompt("query")); err == nil || err.Error() != "bbolt: semantic search is not supported" {
-		t.Fatalf("semantic search error mismatch: %v", err)
-	}
-	if _, err := store.Search(ctx, storage.WithFullText("query")); err == nil || err.Error() != "bbolt: full text search is not supported" {
-		t.Fatalf("full text search error mismatch: %v", err)
-	}
-}
-
 func newStore(t *testing.T, ownerID, sessionID string) (*Bbolt, context.Context) {
 	t.Helper()
 

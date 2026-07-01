@@ -277,25 +277,6 @@ func (b *Bbolt) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.Entr
 	return result, nil
 }
 
-func (b *Bbolt) Search(ctx context.Context, opts ...storage.SearchBy) (view.EntryView, error) {
-	var option storage.SearchOption
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&option)
-		}
-	}
-	if option.GetEntryId() > 0 {
-		return b.Range(ctx, view.EntryRange{SeqS: option.GetEntryId(), SeqE: option.GetEntryId() + 1})
-	}
-	if option.GetSemanticText() != "" {
-		return view.EntryView{}, errors.New("bbolt: semantic search is not supported")
-	}
-	if option.GetFullText() != "" {
-		return view.EntryView{}, errors.New("bbolt: full text search is not supported")
-	}
-	return view.EntryView{}, errors.New("bbolt: unsupported search option")
-}
-
 func (b *Bbolt) readMeta(ownerID string) (metaState, error) {
 	if b.db == nil {
 		return metaState{}, errors.New("bbolt: storage is not initialized")

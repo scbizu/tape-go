@@ -167,10 +167,6 @@ func (noopStorage) Rewind(context.Context, ...storage.RewindBy) (view.EntryRange
 	return view.EntryRange{}, nil
 }
 
-func (noopStorage) Search(context.Context, ...storage.SearchBy) (view.EntryView, error) {
-	return view.EntryView{}, nil
-}
-
 type closableStorage struct {
 	noopStorage
 	closed bool
