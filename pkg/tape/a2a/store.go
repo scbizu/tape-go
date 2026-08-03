@@ -17,8 +17,8 @@ import (
 )
 
 type Config struct {
-	Storage       storage.TapeStorage
-	Authenticator taskstore.Authenticator
+	Storage       storage.TapeStorage     `validate:"required"`
+	Authenticator taskstore.Authenticator `validate:"required"`
 	TimeProvider  func() time.Time
 }
 
@@ -45,11 +45,8 @@ type projection struct {
 }
 
 func NewStore(config Config) (*Store, error) {
-	if config.Storage == nil {
-		return nil, errors.New("a2a tape: nil storage")
-	}
-	if config.Authenticator == nil {
-		return nil, errors.New("a2a tape: nil authenticator")
+	if err := validateStructure("config", config); err != nil {
+		return nil, err
 	}
 	if config.TimeProvider == nil {
 		config.TimeProvider = time.Now

@@ -67,3 +67,17 @@ func TestRecordRejectsMismatchedEventIdentity(t *testing.T) {
 		t.Fatal("newTaskRecord() error = nil, want identity mismatch")
 	}
 }
+
+func TestRecordRejectsMissingSearchableMessageID(t *testing.T) {
+	task := testTask("task-1", "context-1", a2a.TaskStateWorking)
+	message := &a2a.Message{ID: "message-1", TaskID: task.ID, ContextID: task.ContextID}
+	record, err := newTaskRecord("owner-a", task, message, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.MessageID = ""
+
+	if _, err := recordFromEntry(record.entry()); err == nil {
+		t.Fatal("recordFromEntry() error = nil, want required messageId validation")
+	}
+}

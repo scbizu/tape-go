@@ -145,6 +145,13 @@ func newTestStore(t *testing.T, backend storage.TapeStorage) *Store {
 	return store
 }
 
+func TestNewStoreRejectsTypedNilStorage(t *testing.T) {
+	var backend *jsonl.JSONL
+	if _, err := NewStore(Config{Storage: backend, Authenticator: testAuthenticator}); err == nil {
+		t.Fatal("NewStore() error = nil, want typed-nil storage validation")
+	}
+}
+
 func TestStoreCreateAndGet(t *testing.T) {
 	for _, factory := range backendFactories(t) {
 		t.Run(factory.name, func(t *testing.T) {
@@ -264,6 +271,22 @@ func TestStoreUpdateUsesOCC(t *testing.T) {
 				t.Fatalf("Update() error = %v, want ErrConcurrentModification", err)
 			}
 		})
+	}
+}
+
+func TestStoreUpdateRejectsTypedNilEvent(t *testing.T) {
+	backend := backendFactories(t)[0].open(t)
+	defer closeBackend(t, backend)
+	store := newTestStore(t, backend)
+	ctx := authenticatedAs("owner-a")
+	task := testTask("task-1", "context-1", a2a.TaskStateSubmitted)
+	version, err := store.Create(ctx, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var event *a2a.TaskStatusUpdateEvent
+	if _, err := store.Update(ctx, &taskstore.UpdateRequest{Task: task, Event: event, PrevVersion: version}); err == nil {
+		t.Fatal("Update() error = nil, want typed-nil event validation")
 	}
 }
 

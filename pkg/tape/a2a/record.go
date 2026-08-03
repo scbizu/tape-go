@@ -23,32 +23,32 @@ const (
 )
 
 type tapeRecord struct {
-	ProfileVersion int                   `json:"profileVersion"`
-	A2AVersion     string                `json:"a2aVersion"`
-	RecordID       string                `json:"recordId"`
-	Owner          string                `json:"owner"`
-	Kind           entry.EntryKind       `json:"kind"`
-	TaskID         a2a.TaskID            `json:"taskId,omitempty"`
-	ContextID      string                `json:"contextId,omitempty"`
-	MessageID      string                `json:"messageId,omitempty"`
-	Task           *a2a.Task             `json:"task,omitempty"`
+	ProfileVersion int                   `json:"profileVersion" validate:"eq=1"`
+	A2AVersion     string                `json:"a2aVersion" validate:"eq=1.0"`
+	RecordID       string                `json:"recordId" validate:"required,len=64,hexadecimal"`
+	Owner          string                `json:"owner" validate:"required"`
+	Kind           entry.EntryKind       `json:"kind" validate:"required,oneof=a2a:task a2a:message a2a:status_update a2a:artifact_update"`
+	TaskID         a2a.TaskID            `json:"taskId,omitempty" validate:"required_without=Message"`
+	ContextID      string                `json:"contextId,omitempty" validate:"required_without=Message"`
+	MessageID      string                `json:"messageId,omitempty" validate:"required_if=Kind a2a:message"`
+	Task           *a2a.Task             `json:"task,omitempty" validate:"required_without=Message"`
 	Message        *a2a.Message          `json:"message,omitempty"`
-	Event          *a2a.StreamResponse   `json:"event,omitempty"`
-	PrevVersion    taskstore.TaskVersion `json:"prevVersion,omitempty"`
+	Event          *a2a.StreamResponse   `json:"event,omitempty" validate:"required"`
+	PrevVersion    taskstore.TaskVersion `json:"prevVersion,omitempty" validate:"gte=0"`
+}
+
+type taskRecordInput struct {
+	Owner string    `validate:"required"`
+	Task  *a2a.Task `validate:"required"`
+	Event a2a.Event `validate:"required"`
 }
 
 func newTaskRecord(owner string, task *a2a.Task, event a2a.Event, prevVersion taskstore.TaskVersion) (*tapeRecord, error) {
-	if owner == "" {
-		return nil, errors.New("a2a tape: empty owner")
-	}
-	if task == nil {
-		return nil, errors.New("a2a tape: nil task")
+	if err := validateStructure("task record input", taskRecordInput{Owner: owner, Task: task, Event: event}); err != nil {
+		return nil, err
 	}
 	if task.ID == "" || task.ContextID == "" {
 		return nil, errors.New("a2a tape: task identity is incomplete")
-	}
-	if event == nil {
-		return nil, errors.New("a2a tape: nil event")
 	}
 
 	kind, err := kindForEvent(event)
@@ -152,6 +152,9 @@ func recordFromEntry(e entry.EntryLike) (*tapeRecord, error) {
 }
 
 func (r *tapeRecord) validate(e entry.CustomEntry) error {
+	if err := validateStructure("record", r); err != nil {
+		return err
+	}
 	if r.ProfileVersion != profileVersion {
 		return fmt.Errorf("a2a tape: unsupported profile version %d", r.ProfileVersion)
 	}

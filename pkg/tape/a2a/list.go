@@ -30,11 +30,12 @@ func (s *Store) List(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListT
 	if req == nil {
 		req = &a2a.ListTasksRequest{}
 	}
+	if err := validateValue("list page size", req.PageSize, "omitempty,min=1,max=100"); err != nil {
+		return nil, fmt.Errorf("%w: %w", err, a2a.ErrInvalidRequest)
+	}
 	pageSize := req.PageSize
 	if pageSize == 0 {
 		pageSize = defaultPageSize
-	} else if pageSize < 1 || pageSize > 100 {
-		return nil, fmt.Errorf("a2a tape: page size must be between 1 and 100 inclusive, got %d: %w", pageSize, a2a.ErrInvalidRequest)
 	}
 	ownerCtx, principal, err := s.ownerContext(ctx)
 	if err != nil {
