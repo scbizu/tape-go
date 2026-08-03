@@ -26,8 +26,16 @@ type Store struct {
 	storage      storage.TapeStorage
 	authenticate taskstore.Authenticator
 	now          func() time.Time
-	mu           sync.Mutex
+	initMu       sync.Mutex
 	initialized  sync.Map
+	owners       sync.Map
+}
+
+type ownerProjection struct {
+	mu             sync.Mutex
+	projection     *projection
+	lastAppliedSeq uint64
+	loaded         bool
 }
 
 type projection struct {
@@ -53,14 +61,15 @@ func NewStore(config Config) (*Store, error) {
 }
 
 func (s *Store) Create(ctx context.Context, task *a2a.Task) (taskstore.TaskVersion, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	ownerCtx, principal, err := s.ownerContext(ctx)
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
 	}
-	state, err := s.replay(ownerCtx)
+	ownerState := s.ownerProjection(principal)
+	ownerState.mu.Lock()
+	defer ownerState.mu.Unlock()
+
+	state, err := s.syncProjection(ownerCtx, ownerState)
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
 	}
@@ -74,18 +83,19 @@ func (s *Store) Create(ctx context.Context, task *a2a.Task) (taskstore.TaskVersi
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
 	}
-	return s.append(ownerCtx, record)
+	return s.append(ownerCtx, ownerState, record)
 }
 
 func (s *Store) Get(ctx context.Context, taskID a2a.TaskID) (*taskstore.StoredTask, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	ownerCtx, _, err := s.ownerContext(ctx)
+	ownerCtx, principal, err := s.ownerContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	state, err := s.replay(ownerCtx)
+	ownerState := s.ownerProjection(principal)
+	ownerState.mu.Lock()
+	defer ownerState.mu.Unlock()
+
+	state, err := s.syncProjection(ownerCtx, ownerState)
 	if err != nil {
 		return nil, err
 	}
@@ -101,14 +111,15 @@ func (s *Store) Get(ctx context.Context, taskID a2a.TaskID) (*taskstore.StoredTa
 }
 
 func (s *Store) Update(ctx context.Context, update *taskstore.UpdateRequest) (taskstore.TaskVersion, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	ownerCtx, principal, err := s.ownerContext(ctx)
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
 	}
-	state, err := s.replay(ownerCtx)
+	ownerState := s.ownerProjection(principal)
+	ownerState.mu.Lock()
+	defer ownerState.mu.Unlock()
+
+	state, err := s.syncProjection(ownerCtx, ownerState)
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
 	}
@@ -129,7 +140,7 @@ func (s *Store) Update(ctx context.Context, update *taskstore.UpdateRequest) (ta
 	if update.PrevVersion != taskstore.TaskVersionMissing && update.PrevVersion != stored.Version {
 		return taskstore.TaskVersionMissing, taskstore.ErrConcurrentModification
 	}
-	return s.append(ownerCtx, record)
+	return s.append(ownerCtx, ownerState, record)
 }
 
 func (s *Store) ownerContext(ctx context.Context) (context.Context, string, error) {
@@ -142,30 +153,72 @@ func (s *Store) ownerContext(ctx context.Context) (context.Context, string, erro
 	}
 	ownerCtx := owner.WithOwnerId(ctx, principal)
 	if _, ok := s.initialized.Load(principal); !ok {
-		if err := s.storage.Init(ownerCtx); err != nil {
-			return nil, "", fmt.Errorf("a2a tape: init owner %q: %w", principal, err)
+		s.initMu.Lock()
+		defer s.initMu.Unlock()
+		if _, ok := s.initialized.Load(principal); !ok {
+			if err := s.storage.Init(ownerCtx); err != nil {
+				return nil, "", fmt.Errorf("a2a tape: init owner %q: %w", principal, err)
+			}
+			s.initialized.Store(principal, struct{}{})
 		}
-		s.initialized.Store(principal, struct{}{})
 	}
 	return ownerCtx, principal, nil
 }
 
-func (s *Store) replay(ctx context.Context) (*projection, error) {
-	state := &projection{
+func (s *Store) ownerProjection(principal string) *ownerProjection {
+	value, _ := s.owners.LoadOrStore(principal, &ownerProjection{})
+	return value.(*ownerProjection)
+}
+
+func newProjection() *projection {
+	return &projection{
 		tasks:     make(map[a2a.TaskID]*taskstore.StoredTask),
 		recordIDs: make(map[string]taskstore.TaskVersion),
 	}
+}
+
+func (s *Store) syncProjection(ctx context.Context, cached *ownerProjection) (*projection, error) {
 	tape, err := s.storage.Get(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("a2a tape: get tape: %w", err)
 	}
-	if tape.Scope.SeqE == 0 {
+	head := tape.Scope.SeqE
+	if cached.loaded && head < cached.lastAppliedSeq {
+		lastApplied := cached.lastAppliedSeq
+		cached.projection = nil
+		cached.lastAppliedSeq = 0
+		cached.loaded = false
+		return nil, fmt.Errorf("a2a tape: head regressed from seq %d to %d", lastApplied, head)
+	}
+	if cached.loaded && head == cached.lastAppliedSeq {
+		return cached.projection, nil
+	}
+
+	start := uint64(1)
+	state := newProjection()
+	if cached.loaded {
+		start = cached.lastAppliedSeq + 1
+		state = cached.projection
+	}
+	if head == 0 {
+		cached.projection = state
+		cached.lastAppliedSeq = 0
+		cached.loaded = true
 		return state, nil
 	}
-	entries, err := s.storage.Range(ctx, view.EntryRange{SeqS: 1, SeqE: tape.Scope.SeqE + 1})
+	entries, err := s.storage.Range(ctx, view.EntryRange{SeqS: start, SeqE: head + 1})
 	if err != nil {
 		return nil, fmt.Errorf("a2a tape: range tape: %w", err)
 	}
+	if err := validateReplayRange(entries.Raw, start, head); err != nil {
+		return nil, err
+	}
+
+	type decodedRecord struct {
+		record  *tapeRecord
+		version taskstore.TaskVersion
+	}
+	decoded := make([]decodedRecord, 0, len(entries.Raw))
 	for _, tapeEntry := range entries.Raw {
 		if !isA2AKind(tapeEntry.GetKind()) {
 			continue
@@ -174,13 +227,41 @@ func (s *Store) replay(ctx context.Context) (*projection, error) {
 		if err != nil {
 			return nil, fmt.Errorf("a2a tape: replay seq %d record %s: %w", tapeEntry.GetID(), recordIdentityFromEntry(tapeEntry), err)
 		}
-		version := taskstore.TaskVersion(tapeEntry.GetID())
-		state.recordIDs[record.RecordID] = version
-		if record.Task != nil {
-			state.tasks[record.TaskID] = &taskstore.StoredTask{Task: record.Task, Version: version}
-		}
+		decoded = append(decoded, decodedRecord{record: record, version: taskstore.TaskVersion(tapeEntry.GetID())})
 	}
+	for _, item := range decoded {
+		applyRecord(state, item.record, item.version)
+	}
+	cached.projection = state
+	cached.lastAppliedSeq = head
+	cached.loaded = true
 	return state, nil
+}
+
+func validateReplayRange(entries []entry.EntryLike, start, head uint64) error {
+	if len(entries) == 0 {
+		return fmt.Errorf("a2a tape: replay range [%d,%d] returned no entries", start, head)
+	}
+	expected := start
+	for _, tapeEntry := range entries {
+		if tapeEntry.GetID() != expected {
+			return fmt.Errorf("a2a tape: replay expected seq %d, got %d", expected, tapeEntry.GetID())
+		}
+		expected++
+	}
+	if expected-1 != head {
+		return fmt.Errorf("a2a tape: replay ended at seq %d, want %d", expected-1, head)
+	}
+	return nil
+}
+
+func applyRecord(state *projection, record *tapeRecord, version taskstore.TaskVersion) {
+	if _, exists := state.recordIDs[record.RecordID]; !exists {
+		state.recordIDs[record.RecordID] = version
+	}
+	if record.Task != nil {
+		state.tasks[record.TaskID] = &taskstore.StoredTask{Task: record.Task, Version: version}
+	}
 }
 
 func recordIdentityFromEntry(e entry.EntryLike) string {
@@ -226,17 +307,21 @@ func isA2AKind(kind entry.EntryKind) bool {
 	}
 }
 
-func (s *Store) append(ctx context.Context, record *tapeRecord) (taskstore.TaskVersion, error) {
+func (s *Store) append(ctx context.Context, cached *ownerProjection, record *tapeRecord) (taskstore.TaskVersion, error) {
 	tapeEntry := record.entry()
 	tapeEntry.Timestamp = s.now()
 	if err := s.storage.Store(ctx, tapeEntry); err != nil {
 		return taskstore.TaskVersionMissing, fmt.Errorf("a2a tape: append record %s: %w", record.RecordID, err)
 	}
-	tape, err := s.storage.Get(ctx)
+	state, err := s.syncProjection(ctx, cached)
 	if err != nil {
-		return taskstore.TaskVersionMissing, fmt.Errorf("a2a tape: read appended version: %w", err)
+		return taskstore.TaskVersionMissing, fmt.Errorf("a2a tape: replay appended record %s: %w", record.RecordID, err)
 	}
-	return taskstore.TaskVersion(tape.Scope.SeqE), nil
+	version, exists := state.recordIDs[record.RecordID]
+	if !exists {
+		return taskstore.TaskVersionMissing, fmt.Errorf("a2a tape: appended record %s is missing from replay", record.RecordID)
+	}
+	return version, nil
 }
 
 func cloneTask(task *a2a.Task) (*a2a.Task, error) {

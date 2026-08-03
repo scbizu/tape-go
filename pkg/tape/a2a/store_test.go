@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +34,61 @@ func testAuthenticator(ctx context.Context) (string, error) {
 type backendFactory struct {
 	name string
 	open func(t *testing.T) storage.TapeStorage
+}
+
+type observedStorage struct {
+	storage.TapeStorage
+
+	mu         sync.Mutex
+	ranges     []view.EntryRange
+	forcedHead *uint64
+	blockOwner string
+	entered    chan struct{}
+	release    chan struct{}
+	enterOnce  sync.Once
+}
+
+func (s *observedStorage) Get(ctx context.Context) (view.TapeView, error) {
+	ownerID, _ := owner.GetOwnerId(ctx)
+	s.mu.Lock()
+	block := ownerID != "" && ownerID == s.blockOwner && s.entered != nil && s.release != nil
+	forcedHead := s.forcedHead
+	s.mu.Unlock()
+	if block {
+		s.enterOnce.Do(func() { close(s.entered) })
+		<-s.release
+	}
+	tape, err := s.TapeStorage.Get(ctx)
+	if err == nil && forcedHead != nil {
+		tape.Scope.SeqE = *forcedHead
+	}
+	return tape, err
+}
+
+func (s *observedStorage) Range(ctx context.Context, r view.EntryRange, opts ...storage.RangeBy) (view.EntryView, error) {
+	s.mu.Lock()
+	s.ranges = append(s.ranges, r)
+	s.mu.Unlock()
+	return s.TapeStorage.Range(ctx, r, opts...)
+}
+
+func (s *observedStorage) resetRanges() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ranges = nil
+}
+
+func (s *observedStorage) observedRanges() []view.EntryRange {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]view.EntryRange(nil), s.ranges...)
+}
+
+func (s *observedStorage) Close() error {
+	if closer, ok := s.TapeStorage.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return nil
 }
 
 func backendFactories(t *testing.T) []backendFactory {
@@ -323,6 +379,127 @@ func TestStoreReplayFailsClosedOnCorruptRecord(t *testing.T) {
 			_, err := newTestStore(t, backend).Get(authenticatedAs("owner-a"), "task-1")
 			if err == nil || !strings.Contains(err.Error(), "seq 1") || !strings.Contains(err.Error(), "corrupt-1") {
 				t.Fatalf("Get() error = %v, want seq and record identity", err)
+			}
+		})
+	}
+}
+
+func TestStoreReplayReadsOnlyNewEntries(t *testing.T) {
+	for _, factory := range backendFactories(t) {
+		t.Run(factory.name, func(t *testing.T) {
+			backend := &observedStorage{TapeStorage: factory.open(t)}
+			defer closeBackend(t, backend)
+			ctx := authenticatedAs("owner-a")
+			store := newTestStore(t, backend)
+			task1 := testTask("task-1", "context-1", a2a.TaskStateSubmitted)
+			if _, err := store.Create(ctx, task1); err != nil {
+				t.Fatal(err)
+			}
+
+			backend.resetRanges()
+			if _, err := store.Get(ctx, task1.ID); err != nil {
+				t.Fatal(err)
+			}
+			if ranges := backend.observedRanges(); len(ranges) != 0 {
+				t.Fatalf("unchanged head triggered Range calls: %+v", ranges)
+			}
+
+			otherStore := newTestStore(t, backend)
+			task2 := testTask("task-2", "context-2", a2a.TaskStateSubmitted)
+			if _, err := otherStore.Create(ctx, task2); err != nil {
+				t.Fatal(err)
+			}
+			backend.resetRanges()
+			if _, err := store.Get(ctx, task2.ID); err != nil {
+				t.Fatal(err)
+			}
+			want := view.EntryRange{SeqS: 2, SeqE: 3}
+			if ranges := backend.observedRanges(); len(ranges) != 1 || ranges[0] != want {
+				t.Fatalf("incremental ranges = %+v, want [%+v]", ranges, want)
+			}
+		})
+	}
+}
+
+func TestStoreAllowsDifferentOwnersToReadConcurrently(t *testing.T) {
+	for _, factory := range backendFactories(t) {
+		t.Run(factory.name, func(t *testing.T) {
+			backend := &observedStorage{TapeStorage: factory.open(t)}
+			defer closeBackend(t, backend)
+			store := newTestStore(t, backend)
+			taskA := testTask("task-a", "context-a", a2a.TaskStateSubmitted)
+			taskB := testTask("task-b", "context-b", a2a.TaskStateSubmitted)
+			if _, err := store.Create(authenticatedAs("owner-a"), taskA); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.Create(authenticatedAs("owner-b"), taskB); err != nil {
+				t.Fatal(err)
+			}
+
+			backend.mu.Lock()
+			backend.blockOwner = "owner-a"
+			backend.entered = make(chan struct{})
+			backend.release = make(chan struct{})
+			backend.mu.Unlock()
+			errA := make(chan error, 1)
+			errB := make(chan error, 1)
+			go func() {
+				_, err := store.Get(authenticatedAs("owner-a"), taskA.ID)
+				errA <- err
+			}()
+			select {
+			case <-backend.entered:
+			case <-time.After(time.Second):
+				t.Fatal("owner A did not reach blocked storage read")
+			}
+			go func() {
+				_, err := store.Get(authenticatedAs("owner-b"), taskB.ID)
+				errB <- err
+			}()
+
+			select {
+			case err := <-errB:
+				if err != nil {
+					t.Fatalf("owner B Get() error = %v", err)
+				}
+			case <-time.After(250 * time.Millisecond):
+				close(backend.release)
+				<-errA
+				t.Fatal("owner B was serialized behind owner A")
+			}
+			close(backend.release)
+			if err := <-errA; err != nil {
+				t.Fatalf("owner A Get() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestStoreReplayInvalidatesCacheWhenHeadRegresses(t *testing.T) {
+	for _, factory := range backendFactories(t) {
+		t.Run(factory.name, func(t *testing.T) {
+			backend := &observedStorage{TapeStorage: factory.open(t)}
+			defer closeBackend(t, backend)
+			store := newTestStore(t, backend)
+			ctx := authenticatedAs("owner-a")
+			task := testTask("task-1", "context-1", a2a.TaskStateSubmitted)
+			if _, err := store.Create(ctx, task); err != nil {
+				t.Fatal(err)
+			}
+
+			regressed := uint64(0)
+			backend.mu.Lock()
+			backend.forcedHead = &regressed
+			backend.mu.Unlock()
+			if _, err := store.Get(ctx, task.ID); err == nil || !strings.Contains(err.Error(), "head regressed") {
+				t.Fatalf("Get() error = %v, want head regression", err)
+			}
+
+			backend.mu.Lock()
+			backend.forcedHead = nil
+			backend.mu.Unlock()
+			if _, err := store.Get(ctx, task.ID); err != nil {
+				t.Fatalf("Get() after cache invalidation error = %v", err)
 			}
 		})
 	}
