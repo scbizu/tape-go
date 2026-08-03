@@ -141,6 +141,29 @@ func (s *Store) Update(ctx context.Context, update *taskstore.UpdateRequest) (ta
 	return s.append(ownerCtx, ownerState, record)
 }
 
+func (s *Store) persistDirectMessage(ctx context.Context, message *a2a.Message) (taskstore.TaskVersion, error) {
+	ownerCtx, principal, err := s.ownerContext(ctx)
+	if err != nil {
+		return taskstore.TaskVersionMissing, err
+	}
+	ownerState := s.ownerProjection(principal)
+	ownerState.mu.Lock()
+	defer ownerState.mu.Unlock()
+
+	state, err := s.syncProjection(ownerCtx, ownerState)
+	if err != nil {
+		return taskstore.TaskVersionMissing, err
+	}
+	record, err := newMessageRecord(principal, message)
+	if err != nil {
+		return taskstore.TaskVersionMissing, err
+	}
+	if version, exists := state.recordIDs[record.RecordID]; exists {
+		return version, nil
+	}
+	return s.append(ownerCtx, ownerState, record)
+}
+
 func (s *Store) ownerContext(ctx context.Context) (context.Context, string, error) {
 	principal, err := s.authenticate(ctx)
 	if err != nil {

@@ -81,3 +81,24 @@ func TestRecordRejectsMissingSearchableMessageID(t *testing.T) {
 		t.Fatal("recordFromEntry() error = nil, want required messageId validation")
 	}
 }
+
+func TestDirectMessageRecordRoundTrip(t *testing.T) {
+	message := &a2a.Message{ID: "message-1", ContextID: "context-1", Role: a2a.MessageRoleAgent}
+	record, err := newMessageRecord("owner-a", message)
+	if err != nil {
+		t.Fatalf("newMessageRecord() error = %v", err)
+	}
+	got, err := recordFromEntry(record.entry())
+	if err != nil {
+		t.Fatalf("recordFromEntry() error = %v", err)
+	}
+	if got.Kind != kindMessage || got.MessageID != message.ID {
+		t.Fatalf("direct message identity = (%q, %q), want (%q, %q)", got.Kind, got.MessageID, kindMessage, message.ID)
+	}
+	if got.Task != nil || got.TaskID != "" {
+		t.Fatalf("direct record unexpectedly contains a task: %#v", got)
+	}
+	if !reflect.DeepEqual(got.Message, message) || !reflect.DeepEqual(got.Event.Event, message) {
+		t.Fatalf("direct message round trip mismatch: %#v", got)
+	}
+}

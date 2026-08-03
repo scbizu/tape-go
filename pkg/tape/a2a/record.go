@@ -81,6 +81,34 @@ func newTaskRecord(owner string, task *a2a.Task, event a2a.Event, prevVersion ta
 	return record, nil
 }
 
+func newMessageRecord(owner string, message *a2a.Message) (*tapeRecord, error) {
+	if owner == "" {
+		return nil, errors.New("a2a tape: empty owner")
+	}
+	if message == nil || message.ID == "" {
+		return nil, errors.New("a2a tape: direct message identity is incomplete")
+	}
+	if message.TaskID != "" {
+		return nil, errors.New("a2a tape: direct message must not reference a task")
+	}
+	record := &tapeRecord{
+		ProfileVersion: profileVersion,
+		A2AVersion:     string(a2a.Version),
+		Owner:          owner,
+		Kind:           kindMessage,
+		ContextID:      message.ContextID,
+		MessageID:      message.ID,
+		Message:        message,
+		Event:          &a2a.StreamResponse{Event: message},
+	}
+	var err error
+	record.RecordID, err = recordID(record)
+	if err != nil {
+		return nil, err
+	}
+	return record, nil
+}
+
 func kindForEvent(event a2a.Event) (entry.EntryKind, error) {
 	switch event.(type) {
 	case *a2a.Task:
@@ -101,11 +129,15 @@ func (r *tapeRecord) entry() entry.CustomEntry {
 	if err != nil {
 		panic(fmt.Sprintf("a2a tape: marshal validated record: %v", err))
 	}
+	content := string(r.TaskID)
+	if r.Kind == kindMessage {
+		content = r.MessageID
+	}
 	return entry.CustomEntry{
 		Entry: entry.NewEntry(
 			entry.WithEntryKind(r.Kind),
 			entry.WithEntryOwner(r.Owner),
-			entry.WithEntryContent(string(r.TaskID)),
+			entry.WithEntryContent(content),
 		),
 		Extensions: map[string]any{recordExtension: string(payload)},
 	}
@@ -167,7 +199,13 @@ func (r *tapeRecord) validate(e entry.CustomEntry) error {
 	if r.Kind != e.GetKind() {
 		return fmt.Errorf("a2a tape: record kind %q does not match entry kind %q", r.Kind, e.GetKind())
 	}
-	if r.Task == nil || r.Event == nil || r.Event.Event == nil {
+	if r.Event == nil || r.Event.Event == nil {
+		return errors.New("a2a tape: task record is incomplete")
+	}
+	if r.Kind == kindMessage && r.Message != nil {
+		return r.validateDirectMessage()
+	}
+	if r.Task == nil {
 		return errors.New("a2a tape: task record is incomplete")
 	}
 	if r.TaskID != r.Task.ID || r.ContextID != r.Task.ContextID {
@@ -194,10 +232,49 @@ func (r *tapeRecord) validate(e entry.CustomEntry) error {
 	return nil
 }
 
+func (r *tapeRecord) validateDirectMessage() error {
+	if r.Task != nil || r.TaskID != "" {
+		return errors.New("a2a tape: direct message must not contain a task")
+	}
+	if r.MessageID == "" || r.Message.ID != r.MessageID {
+		return errors.New("a2a tape: searchable message identity does not match message")
+	}
+	if r.Message.TaskID != "" || r.ContextID != r.Message.ContextID {
+		return errors.New("a2a tape: direct message identity is inconsistent")
+	}
+	eventMessage, ok := r.Event.Event.(*a2a.Message)
+	if !ok {
+		return fmt.Errorf("a2a tape: direct message event has type %T", r.Event.Event)
+	}
+	eventJSON, err := json.Marshal(eventMessage)
+	if err != nil {
+		return fmt.Errorf("a2a tape: marshal direct message event: %w", err)
+	}
+	messageJSON, err := json.Marshal(r.Message)
+	if err != nil {
+		return fmt.Errorf("a2a tape: marshal direct message: %w", err)
+	}
+	if string(eventJSON) != string(messageJSON) {
+		return errors.New("a2a tape: direct message and event differ")
+	}
+	wantID, err := recordID(r)
+	if err != nil {
+		return err
+	}
+	if r.RecordID == "" || r.RecordID != wantID {
+		return errors.New("a2a tape: record ID mismatch")
+	}
+	return nil
+}
+
 func recordID(r *tapeRecord) (string, error) {
 	taskJSON, err := json.Marshal(r.Task)
 	if err != nil {
 		return "", fmt.Errorf("a2a tape: marshal task: %w", err)
+	}
+	messageJSON, err := json.Marshal(r.Message)
+	if err != nil {
+		return "", fmt.Errorf("a2a tape: marshal message: %w", err)
 	}
 	eventJSON, err := json.Marshal(r.Event)
 	if err != nil {
@@ -208,8 +285,16 @@ func recordID(r *tapeRecord) (string, error) {
 		Kind        entry.EntryKind       `json:"kind"`
 		PrevVersion taskstore.TaskVersion `json:"prevVersion"`
 		Task        json.RawMessage       `json:"task"`
+		Message     json.RawMessage       `json:"message"`
 		Event       json.RawMessage       `json:"event"`
-	}{r.Owner, r.Kind, r.PrevVersion, taskJSON, eventJSON})
+	}{
+		Owner:       r.Owner,
+		Kind:        r.Kind,
+		PrevVersion: r.PrevVersion,
+		Task:        taskJSON,
+		Message:     messageJSON,
+		Event:       eventJSON,
+	})
 	if err != nil {
 		return "", fmt.Errorf("a2a tape: marshal record identity: %w", err)
 	}
