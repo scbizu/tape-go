@@ -100,6 +100,38 @@ func (s *Store) Get(ctx context.Context, taskID a2a.TaskID) (*taskstore.StoredTa
 	return &taskstore.StoredTask{Task: cloned, Version: stored.Version}, nil
 }
 
+func (s *Store) Update(ctx context.Context, update *taskstore.UpdateRequest) (taskstore.TaskVersion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ownerCtx, principal, err := s.ownerContext(ctx)
+	if err != nil {
+		return taskstore.TaskVersionMissing, err
+	}
+	state, err := s.replay(ownerCtx)
+	if err != nil {
+		return taskstore.TaskVersionMissing, err
+	}
+	if update == nil || update.Task == nil || update.Event == nil {
+		return taskstore.TaskVersionMissing, errors.New("a2a tape: incomplete update request")
+	}
+	record, err := newTaskRecord(principal, update.Task, update.Event, update.PrevVersion)
+	if err != nil {
+		return taskstore.TaskVersionMissing, err
+	}
+	if version, exists := state.recordIDs[record.RecordID]; exists {
+		return version, nil
+	}
+	stored, exists := state.tasks[update.Task.ID]
+	if !exists {
+		return taskstore.TaskVersionMissing, a2a.ErrTaskNotFound
+	}
+	if update.PrevVersion != taskstore.TaskVersionMissing && update.PrevVersion != stored.Version {
+		return taskstore.TaskVersionMissing, taskstore.ErrConcurrentModification
+	}
+	return s.append(ownerCtx, record)
+}
+
 func (s *Store) ownerContext(ctx context.Context) (context.Context, string, error) {
 	principal, err := s.authenticate(ctx)
 	if err != nil {
@@ -140,7 +172,7 @@ func (s *Store) replay(ctx context.Context) (*projection, error) {
 		}
 		record, err := recordFromEntry(tapeEntry)
 		if err != nil {
-			return nil, fmt.Errorf("a2a tape: replay seq %d: %w", tapeEntry.GetID(), err)
+			return nil, fmt.Errorf("a2a tape: replay seq %d record %s: %w", tapeEntry.GetID(), recordIdentityFromEntry(tapeEntry), err)
 		}
 		version := taskstore.TaskVersion(tapeEntry.GetID())
 		state.recordIDs[record.RecordID] = version
@@ -149,6 +181,40 @@ func (s *Store) replay(ctx context.Context) (*projection, error) {
 		}
 	}
 	return state, nil
+}
+
+func recordIdentityFromEntry(e entry.EntryLike) string {
+	var extensions map[string]any
+	switch custom := e.(type) {
+	case entry.CustomEntry:
+		extensions = custom.Extensions
+	case *entry.CustomEntry:
+		if custom != nil {
+			extensions = custom.Extensions
+		}
+	}
+	raw, ok := extensions[recordExtension]
+	if !ok {
+		return "<unknown>"
+	}
+	var payload []byte
+	switch value := raw.(type) {
+	case string:
+		payload = []byte(value)
+	case json.RawMessage:
+		payload = value
+	case []byte:
+		payload = value
+	default:
+		return "<unknown>"
+	}
+	var identity struct {
+		RecordID string `json:"recordId"`
+	}
+	if err := json.Unmarshal(payload, &identity); err != nil || identity.RecordID == "" {
+		return "<unknown>"
+	}
+	return identity.RecordID
 }
 
 func isA2AKind(kind entry.EntryKind) bool {

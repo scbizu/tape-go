@@ -5,14 +5,18 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
+	"github.com/scbizu/tape-go/pkg/tape/entry"
+	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	"github.com/scbizu/tape-go/pkg/tape/storage/jsonl"
+	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
 type principalKey struct{}
@@ -174,6 +178,151 @@ func TestStoreOwnerIsolation(t *testing.T) {
 			gotA, err := store.Get(authenticatedAs("owner-a"), taskA.ID)
 			if err != nil || gotA.Task.ContextID != "context-a" {
 				t.Fatalf("owner A task changed: got %#v, err %v", gotA, err)
+			}
+		})
+	}
+}
+
+func TestStoreUpdateUsesOCC(t *testing.T) {
+	for _, factory := range backendFactories(t) {
+		t.Run(factory.name, func(t *testing.T) {
+			backend := factory.open(t)
+			defer closeBackend(t, backend)
+			store := newTestStore(t, backend)
+			ctx := authenticatedAs("owner-a")
+			previous := testTask("task-1", "context-1", a2a.TaskStateSubmitted)
+			version, err := store.Create(ctx, previous)
+			if err != nil {
+				t.Fatal(err)
+			}
+			desired := testTask("task-1", "context-1", a2a.TaskStateWorking)
+			event := a2a.NewStatusUpdateEvent(desired, a2a.TaskStateWorking, nil)
+
+			_, err = store.Update(ctx, &taskstore.UpdateRequest{
+				Task:        desired,
+				Event:       event,
+				PrevTask:    previous,
+				PrevVersion: version + 1,
+			})
+			if !errors.Is(err, taskstore.ErrConcurrentModification) {
+				t.Fatalf("Update() error = %v, want ErrConcurrentModification", err)
+			}
+		})
+	}
+}
+
+func TestStoreUpdateRetryHasNoSecondEffect(t *testing.T) {
+	for _, factory := range backendFactories(t) {
+		t.Run(factory.name, func(t *testing.T) {
+			backend := factory.open(t)
+			defer closeBackend(t, backend)
+			store := newTestStore(t, backend)
+			ctx := authenticatedAs("owner-a")
+			previous := testTask("task-1", "context-1", a2a.TaskStateSubmitted)
+			version, err := store.Create(ctx, previous)
+			if err != nil {
+				t.Fatal(err)
+			}
+			desired := testTask("task-1", "context-1", a2a.TaskStateWorking)
+			event := a2a.NewStatusUpdateEvent(desired, a2a.TaskStateWorking, nil)
+			event.Status.Timestamp = desired.Status.Timestamp
+			request := &taskstore.UpdateRequest{Task: desired, Event: event, PrevTask: previous, PrevVersion: version}
+
+			first, err := store.Update(ctx, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := store.Update(ctx, request)
+			if err != nil {
+				t.Fatalf("retry Update() error = %v", err)
+			}
+			if second != first {
+				t.Fatalf("retry version = %d, want %d", second, first)
+			}
+			tape, err := backend.Get(owner.WithOwnerId(context.Background(), "owner-a"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tape.Scope.SeqE != uint64(first) {
+				t.Fatalf("last seq = %d, want %d; retry appended another record", tape.Scope.SeqE, first)
+			}
+		})
+	}
+}
+
+func TestStoreUpdatePersistsTaskAndEventAtomically(t *testing.T) {
+	for _, factory := range backendFactories(t) {
+		t.Run(factory.name, func(t *testing.T) {
+			ctx := authenticatedAs("owner-a")
+			previous := testTask("task-1", "context-1", a2a.TaskStateSubmitted)
+			desired := testTask("task-1", "context-1", a2a.TaskStateCompleted)
+			event := a2a.NewStatusUpdateEvent(desired, a2a.TaskStateCompleted, nil)
+			event.Status.Timestamp = desired.Status.Timestamp
+
+			firstBackend := factory.open(t)
+			firstStore := newTestStore(t, firstBackend)
+			version, err := firstStore.Create(ctx, previous)
+			if err != nil {
+				t.Fatal(err)
+			}
+			updatedVersion, err := firstStore.Update(ctx, &taskstore.UpdateRequest{
+				Task: desired, Event: event, PrevTask: previous, PrevVersion: version,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			closeBackend(t, firstBackend)
+
+			secondBackend := factory.open(t)
+			defer closeBackend(t, secondBackend)
+			got, err := newTestStore(t, secondBackend).Get(ctx, desired.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Version != updatedVersion || !reflect.DeepEqual(got.Task, desired) {
+				t.Fatalf("recovered task = %#v, want %#v at %d", got, desired, updatedVersion)
+			}
+			ownerCtx := owner.WithOwnerId(context.Background(), "owner-a")
+			entries, err := secondBackend.Range(ownerCtx, view.EntryRange{SeqS: uint64(updatedVersion), SeqE: uint64(updatedVersion) + 1})
+			if err != nil || len(entries.Raw) != 1 {
+				t.Fatalf("read update entry: len=%d err=%v", len(entries.Raw), err)
+			}
+			record, err := recordFromEntry(entries.Raw[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(record.Task, desired) || !reflect.DeepEqual(record.Event.Event, event) {
+				t.Fatalf("atomic record mismatch: %#v", record)
+			}
+		})
+	}
+}
+
+func TestStoreReplayFailsClosedOnCorruptRecord(t *testing.T) {
+	for _, factory := range backendFactories(t) {
+		t.Run(factory.name, func(t *testing.T) {
+			backend := factory.open(t)
+			defer closeBackend(t, backend)
+			ownerCtx := owner.WithOwnerId(context.Background(), "owner-a")
+			if err := backend.Init(ownerCtx); err != nil {
+				t.Fatal(err)
+			}
+			corrupt := entry.CustomEntry{
+				Entry: entry.NewEntry(
+					entry.WithEntryKind(kindTask),
+					entry.WithEntryOwner("owner-a"),
+				),
+				Extensions: map[string]any{
+					recordExtension: `{"profileVersion":99,"recordId":"corrupt-1","owner":"owner-a","kind":"a2a:task"}`,
+				},
+			}
+			if err := backend.Store(ownerCtx, corrupt); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := newTestStore(t, backend).Get(authenticatedAs("owner-a"), "task-1")
+			if err == nil || !strings.Contains(err.Error(), "seq 1") || !strings.Contains(err.Error(), "corrupt-1") {
+				t.Fatalf("Get() error = %v, want seq and record identity", err)
 			}
 		})
 	}
