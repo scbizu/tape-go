@@ -41,6 +41,7 @@ type ownerProjection struct {
 type projection struct {
 	tasks     map[a2a.TaskID]*taskstore.StoredTask
 	recordIDs map[string]taskstore.TaskVersion
+	updatedAt map[a2a.TaskID]time.Time
 }
 
 func NewStore(config Config) (*Store, error) {
@@ -174,6 +175,7 @@ func newProjection() *projection {
 	return &projection{
 		tasks:     make(map[a2a.TaskID]*taskstore.StoredTask),
 		recordIDs: make(map[string]taskstore.TaskVersion),
+		updatedAt: make(map[a2a.TaskID]time.Time),
 	}
 }
 
@@ -217,6 +219,7 @@ func (s *Store) syncProjection(ctx context.Context, cached *ownerProjection) (*p
 	type decodedRecord struct {
 		record  *tapeRecord
 		version taskstore.TaskVersion
+		updated time.Time
 	}
 	decoded := make([]decodedRecord, 0, len(entries.Raw))
 	for _, tapeEntry := range entries.Raw {
@@ -227,10 +230,14 @@ func (s *Store) syncProjection(ctx context.Context, cached *ownerProjection) (*p
 		if err != nil {
 			return nil, fmt.Errorf("a2a tape: replay seq %d record %s: %w", tapeEntry.GetID(), recordIdentityFromEntry(tapeEntry), err)
 		}
-		decoded = append(decoded, decodedRecord{record: record, version: taskstore.TaskVersion(tapeEntry.GetID())})
+		decoded = append(decoded, decodedRecord{
+			record:  record,
+			version: taskstore.TaskVersion(tapeEntry.GetID()),
+			updated: tapeEntry.GetTimestamp(),
+		})
 	}
 	for _, item := range decoded {
-		applyRecord(state, item.record, item.version)
+		applyRecord(state, item.record, item.version, item.updated)
 	}
 	cached.projection = state
 	cached.lastAppliedSeq = head
@@ -255,12 +262,13 @@ func validateReplayRange(entries []entry.EntryLike, start, head uint64) error {
 	return nil
 }
 
-func applyRecord(state *projection, record *tapeRecord, version taskstore.TaskVersion) {
+func applyRecord(state *projection, record *tapeRecord, version taskstore.TaskVersion, updated time.Time) {
 	if _, exists := state.recordIDs[record.RecordID]; !exists {
 		state.recordIDs[record.RecordID] = version
 	}
 	if record.Task != nil {
 		state.tasks[record.TaskID] = &taskstore.StoredTask{Task: record.Task, Version: version}
+		state.updatedAt[record.TaskID] = updated
 	}
 }
 

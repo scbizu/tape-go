@@ -504,3 +504,202 @@ func TestStoreReplayInvalidatesCacheWhenHeadRegresses(t *testing.T) {
 		})
 	}
 }
+
+func TestStoreListDefaultsAndOwnerIsolation(t *testing.T) {
+	for _, factory := range backendFactories(t) {
+		t.Run(factory.name, func(t *testing.T) {
+			backend := factory.open(t)
+			defer closeBackend(t, backend)
+			store := newTestStore(t, backend)
+			for _, task := range []*a2a.Task{
+				testTask("task-a1", "context-a", a2a.TaskStateSubmitted),
+				testTask("task-a2", "context-a", a2a.TaskStateWorking),
+			} {
+				if _, err := store.Create(authenticatedAs("owner-a"), task); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := store.Create(authenticatedAs("owner-b"), testTask("task-b", "context-b", a2a.TaskStateSubmitted)); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := store.List(authenticatedAs("owner-a"), &a2a.ListTasksRequest{})
+			if err != nil {
+				t.Fatalf("List() error = %v", err)
+			}
+			if got.PageSize != 50 || got.TotalSize != 2 || len(got.Tasks) != 2 {
+				t.Fatalf("List() = %#v, want owner A's 2 tasks with default page size 50", got)
+			}
+			for _, task := range got.Tasks {
+				if task.ID == "task-b" {
+					t.Fatal("List() leaked owner B's task")
+				}
+			}
+		})
+	}
+}
+
+func TestStoreListFilters(t *testing.T) {
+	for _, factory := range backendFactories(t) {
+		t.Run(factory.name, func(t *testing.T) {
+			backend := factory.open(t)
+			defer closeBackend(t, backend)
+			store := newTestStore(t, backend)
+			oldTime := time.Date(2026, 8, 3, 6, 0, 0, 0, time.UTC)
+			newTime := time.Date(2026, 8, 3, 8, 0, 0, 0, time.UTC)
+			cutoff := time.Date(2026, 8, 3, 7, 0, 0, 0, time.UTC)
+			old := testTask("task-old", "context-x", a2a.TaskStateWorking)
+			old.Status.Timestamp = &oldTime
+			matched := testTask("task-match", "context-x", a2a.TaskStateWorking)
+			matched.Status.Timestamp = &newTime
+			wrongContext := testTask("task-context", "context-y", a2a.TaskStateWorking)
+			wrongContext.Status.Timestamp = &newTime
+			wrongStatus := testTask("task-status", "context-x", a2a.TaskStateCompleted)
+			wrongStatus.Status.Timestamp = &newTime
+			for _, task := range []*a2a.Task{old, matched, wrongContext, wrongStatus} {
+				if _, err := store.Create(authenticatedAs("owner-a"), task); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			got, err := store.List(authenticatedAs("owner-a"), &a2a.ListTasksRequest{
+				ContextID:            "context-x",
+				Status:               a2a.TaskStateWorking,
+				StatusTimestampAfter: &cutoff,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Tasks) != 1 || got.Tasks[0].ID != matched.ID || got.TotalSize != 1 {
+				t.Fatalf("filtered List() = %#v, want only %q", got, matched.ID)
+			}
+		})
+	}
+}
+
+func TestStoreListRejectsInvalidPageSize(t *testing.T) {
+	backend := backendFactories(t)[0].open(t)
+	defer closeBackend(t, backend)
+	store := newTestStore(t, backend)
+	for _, pageSize := range []int{-1, 101} {
+		_, err := store.List(authenticatedAs("owner-a"), &a2a.ListTasksRequest{PageSize: pageSize})
+		if !errors.Is(err, a2a.ErrInvalidRequest) {
+			t.Fatalf("List(PageSize=%d) error = %v, want ErrInvalidRequest", pageSize, err)
+		}
+	}
+}
+
+func TestStoreListPaginatesByRecordTimeThenTaskID(t *testing.T) {
+	for _, factory := range backendFactories(t) {
+		t.Run(factory.name, func(t *testing.T) {
+			backend := factory.open(t)
+			defer closeBackend(t, backend)
+			times := []time.Time{
+				time.Date(2026, 8, 3, 7, 0, 0, 0, time.UTC),
+				time.Date(2026, 8, 3, 8, 0, 0, 0, time.UTC),
+				time.Date(2026, 8, 3, 8, 0, 0, 0, time.UTC),
+			}
+			store, err := NewStore(Config{
+				Storage:       backend,
+				Authenticator: testAuthenticator,
+				TimeProvider: func() time.Time {
+					next := times[0]
+					times = times[1:]
+					return next
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := authenticatedAs("owner-a")
+			for _, id := range []a2a.TaskID{"task-a", "task-z", "task-b"} {
+				if _, err := store.Create(ctx, testTask(id, "context-1", a2a.TaskStateSubmitted)); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			first, err := store.List(ctx, &a2a.ListTasksRequest{PageSize: 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := taskIDs(first.Tasks); !reflect.DeepEqual(got, []a2a.TaskID{"task-b", "task-z"}) {
+				t.Fatalf("first page IDs = %v, want [task-b task-z]", got)
+			}
+			if first.TotalSize != 3 || first.NextPageToken == "" {
+				t.Fatalf("first page metadata = %#v", first)
+			}
+			second, err := store.List(ctx, &a2a.ListTasksRequest{PageSize: 2, PageToken: first.NextPageToken})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := taskIDs(second.Tasks); !reflect.DeepEqual(got, []a2a.TaskID{"task-a"}) || second.NextPageToken != "" {
+				t.Fatalf("second page = %#v", second)
+			}
+		})
+	}
+}
+
+func taskIDs(tasks []*a2a.Task) []a2a.TaskID {
+	ids := make([]a2a.TaskID, len(tasks))
+	for i, task := range tasks {
+		ids[i] = task.ID
+	}
+	return ids
+}
+
+func TestListItemOrderingUsesTaskIDForTimestampTies(t *testing.T) {
+	updatedAt := time.Date(2026, 8, 3, 8, 0, 0, 0, time.UTC)
+	z := listItem{stored: &taskstore.StoredTask{Task: testTask("task-z", "context-1", a2a.TaskStateSubmitted)}, updatedAt: updatedAt}
+	b := listItem{stored: &taskstore.StoredTask{Task: testTask("task-b", "context-1", a2a.TaskStateSubmitted)}, updatedAt: updatedAt}
+	if got := compareListItems(z, b); got >= 0 {
+		t.Fatalf("compareListItems(task-z, task-b) = %d, want task-z first", got)
+	}
+}
+
+func TestStoreListTrimsHistoryAndArtifactsOnCopies(t *testing.T) {
+	backend := backendFactories(t)[0].open(t)
+	defer closeBackend(t, backend)
+	store := newTestStore(t, backend)
+	ctx := authenticatedAs("owner-a")
+	task := testTask("task-1", "context-1", a2a.TaskStateCompleted)
+	task.History = []*a2a.Message{{ID: "m1"}, {ID: "m2"}, {ID: "m3"}}
+	task.Artifacts = []*a2a.Artifact{{ID: "artifact-1"}}
+	if _, err := store.Create(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	historyLength := 2
+
+	got, err := store.List(ctx, &a2a.ListTasksRequest{HistoryLength: &historyLength})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Tasks) != 1 || taskIDsFromHistory(got.Tasks[0].History) != "m2,m3" {
+		t.Fatalf("trimmed history = %#v", got.Tasks)
+	}
+	if got.Tasks[0].Artifacts != nil {
+		t.Fatalf("artifacts = %#v, want nil", got.Tasks[0].Artifacts)
+	}
+	stored, err := store.Get(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Task.History) != 3 || len(stored.Task.Artifacts) != 1 {
+		t.Fatalf("List() mutated stored task: %#v", stored.Task)
+	}
+
+	withArtifacts, err := store.List(ctx, &a2a.ListTasksRequest{IncludeArtifacts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(withArtifacts.Tasks[0].Artifacts) != 1 {
+		t.Fatalf("IncludeArtifacts result = %#v", withArtifacts.Tasks[0].Artifacts)
+	}
+}
+
+func taskIDsFromHistory(history []*a2a.Message) string {
+	ids := make([]string, len(history))
+	for i, message := range history {
+		ids[i] = message.ID
+	}
+	return strings.Join(ids, ",")
+}
