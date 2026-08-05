@@ -260,7 +260,9 @@ Run the feature test and confirm the first three scenarios pass while transport 
 
 **Step 4: Implement the two-agent transport steps**
 
-Create a deterministic test executor implementing a2asrv.AgentExecutor that emits a submitted Task, Artifact, and completed status. Start httptest.Server with a2asrv.NewHandler and child TapeTaskStore, wrapped in NewRESTHandler or NewJSONRPCHandler. Use the official a2aclient to SendMessage, reopen child storage, GetTask, and assert the Artifact is consumable.
+Create a deterministic test executor implementing a2asrv.AgentExecutor that emits a submitted Task, Artifact, and completed status. Start httptest.Server with a2asrv.NewHandler and child TapeTaskStore, wrapped in NewJSONRPCHandler. Use the official a2aclient to SendMessage, reopen child storage, GetTask, and assert the Artifact is consumable.
+
+Owner scope adjustment (2026-08-04): REST implementation and verification are deferred. The first transport proof is JSON-RPC only.
 
 **Step 5: Verify GREEN and commit**
 

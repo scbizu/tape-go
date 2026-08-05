@@ -1,6 +1,6 @@
 # A2A 1.0 Tape Storage Profile
 
-Status: accepted design
+Status: implemented on `feature/a2a-tape-store`
 
 Date: 2026-08-03
 
@@ -67,7 +67,7 @@ TapeA2ARecord
   event             native A2A Event that caused a Task update
 ```
 
-Native objects are encoded with A2A ProtoJSON rules. The searchable ID copies
+Native objects are encoded with the official A2A Go SDK's JSON rules. The searchable ID copies
 must match the native payload; a mismatch is rejected before append. The owner
 or authenticated principal is not accepted from this envelope. It is derived
 from the server call context and enforced through Tape's owner isolation.
@@ -126,8 +126,11 @@ and task lifecycle validation.
   record to that owner's Tape.
 - Projector: rebuild `StoredTask{Task, Version}` and implement Get/List filtering.
 
-The first implementation may scan and replay records. Secondary indexes are a
-performance optimization and must not become another source of truth.
+The implementation rebuilds a per-owner projection on first access and then
+incrementally replays only records after its last applied Tape seq. A regressed
+head invalidates the cache and fails the current operation; malformed or gapped
+ranges fail closed. The cache remains rebuildable entirely from Tape and never
+becomes another source of truth.
 
 ## Concurrency and failure semantics
 
@@ -183,17 +186,16 @@ Feature: persist A2A tasks on Tape
     Given two authenticated principals use the same task id
     Then neither principal can Get or List the other principal's task
 
-  Scenario Outline: standard A2A clients see the same result
+  Scenario: standard A2A client sees the same result over JSON-RPC
     Given parent and child agents use independent Tapes
-    When the parent delegates through <transport>
+    When the parent delegates through JSON-RPC
     Then the child task remains queryable after restart
     And the parent can consume the child artifact
-
-    Examples:
-      | transport |
-      | REST      |
-      | JSON-RPC  |
 ```
+
+JSON-RPC is the accepted transport proof for this branch. REST binding and its
+acceptance example were explicitly deferred by the owner on 2026-08-04; the
+storage profile itself remains transport-neutral.
 
 ProtoJSON round trips, mismatched IDs, corrupt-record handling, and artifact
 chunk folding remain focused table-driven Go unit tests. They are implementation
@@ -216,7 +218,8 @@ Tapes. Lineage, orchestration policy, and metrics are separate follow-up designs
 The future implementation is ready for review when:
 
 1. `TapeTaskStore` satisfies the official `taskstore.Store` interface.
-2. The four Godog scenarios pass against the declared storage/transport examples.
+2. The four Godog scenarios pass against JSONL, bbolt, and the declared
+   JSON-RPC two-agent example. REST remains deferred.
 3. Focused unit tests cover codec validation, corruption, and artifact folding.
 4. The server exposes standard A2A 1.0 behavior without a Tape-specific wire
    protocol or public local sequence IDs.
