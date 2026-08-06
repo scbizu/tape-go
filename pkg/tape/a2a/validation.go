@@ -28,10 +28,3 @@ func validateStructure(name string, value any) error {
 	}
 	return nil
 }
-
-func validateValue(name string, value any, rules string) error {
-	if err := structureValidator.Var(value, rules); err != nil {
-		return fmt.Errorf("a2a tape: validate %s: %w", name, err)
-	}
-	return nil
-}

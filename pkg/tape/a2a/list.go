@@ -26,16 +26,58 @@ type pageCursor struct {
 	TaskID    a2a.TaskID `json:"taskId"`
 }
 
+type taskPager struct {
+	pageSize int
+	cursor   *pageCursor
+}
+
+func newTaskPager(pageSize int, token string) (taskPager, error) {
+	if pageSize == 0 {
+		pageSize = defaultPageSize
+	} else if pageSize < 1 || pageSize > 100 {
+		return taskPager{}, fmt.Errorf("a2a tape: page size must be between 1 and 100 inclusive, got %d: %w", pageSize, a2a.ErrInvalidRequest)
+	}
+	pager := taskPager{pageSize: pageSize}
+	if token == "" {
+		return pager, nil
+	}
+	cursor, err := decodePageCursor(token)
+	if err != nil {
+		return taskPager{}, err
+	}
+	pager.cursor = &cursor
+	return pager, nil
+}
+
+func (p taskPager) page(items []listItem) ([]listItem, string, error) {
+	if p.cursor != nil {
+		start := len(items)
+		for i, item := range items {
+			if item.updatedAt.Before(p.cursor.UpdatedAt) || (item.updatedAt.Equal(p.cursor.UpdatedAt) && string(item.stored.Task.ID) < string(p.cursor.TaskID)) {
+				start = i
+				break
+			}
+		}
+		items = items[start:]
+	}
+	if len(items) <= p.pageSize {
+		return items, "", nil
+	}
+	last := items[p.pageSize-1]
+	nextPageToken, err := encodePageCursor(last.updatedAt, last.stored.Task.ID)
+	if err != nil {
+		return nil, "", err
+	}
+	return items[:p.pageSize], nextPageToken, nil
+}
+
 func (s *Store) List(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
 	if req == nil {
 		req = &a2a.ListTasksRequest{}
 	}
-	if err := validateValue("list page size", req.PageSize, "omitempty,min=1,max=100"); err != nil {
-		return nil, fmt.Errorf("%w: %w", err, a2a.ErrInvalidRequest)
-	}
-	pageSize := req.PageSize
-	if pageSize == 0 {
-		pageSize = defaultPageSize
+	pager, err := newTaskPager(req.PageSize, req.PageToken)
+	if err != nil {
+		return nil, err
 	}
 	ownerCtx, principal, err := s.ownerContext(ctx)
 	if err != nil {
@@ -64,28 +106,9 @@ func (s *Store) List(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListT
 	}
 	slices.SortFunc(items, compareListItems)
 	totalSize := len(items)
-	if req.PageToken != "" {
-		cursor, err := decodePageCursor(req.PageToken)
-		if err != nil {
-			return nil, err
-		}
-		start := len(items)
-		for i, item := range items {
-			if item.updatedAt.Before(cursor.UpdatedAt) || (item.updatedAt.Equal(cursor.UpdatedAt) && string(item.stored.Task.ID) < string(cursor.TaskID)) {
-				start = i
-				break
-			}
-		}
-		items = items[start:]
-	}
-	nextPageToken := ""
-	if len(items) > pageSize {
-		last := items[pageSize-1]
-		nextPageToken, err = encodePageCursor(last.updatedAt, last.stored.Task.ID)
-		if err != nil {
-			return nil, err
-		}
-		items = items[:pageSize]
+	items, nextPageToken, err := pager.page(items)
+	if err != nil {
+		return nil, err
 	}
 	tasks := make([]*a2a.Task, 0, len(items))
 	for _, item := range items {
@@ -110,7 +133,7 @@ func (s *Store) List(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListT
 	return &a2a.ListTasksResponse{
 		Tasks:         tasks,
 		TotalSize:     totalSize,
-		PageSize:      pageSize,
+		PageSize:      pager.pageSize,
 		NextPageToken: nextPageToken,
 	}, nil
 }

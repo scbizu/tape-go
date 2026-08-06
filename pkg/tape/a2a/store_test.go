@@ -612,6 +612,70 @@ func TestStoreListRejectsInvalidPageSize(t *testing.T) {
 	}
 }
 
+func TestNewTaskPagerNormalizesAndValidatesPageSize(t *testing.T) {
+	tests := []struct {
+		name     string
+		pageSize int
+		wantSize int
+		wantErr  error
+	}{
+		{name: "default", pageSize: 0, wantSize: defaultPageSize},
+		{name: "maximum", pageSize: 100, wantSize: 100},
+		{name: "negative", pageSize: -1, wantErr: a2a.ErrInvalidRequest},
+		{name: "too large", pageSize: 101, wantErr: a2a.ErrInvalidRequest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pager, err := newTaskPager(test.pageSize, "")
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("newTaskPager(%d) error = %v, want %v", test.pageSize, err, test.wantErr)
+			}
+			if err == nil && pager.pageSize != test.wantSize {
+				t.Fatalf("newTaskPager(%d).pageSize = %d, want %d", test.pageSize, pager.pageSize, test.wantSize)
+			}
+		})
+	}
+}
+
+func TestTaskPagerPagesSortedItems(t *testing.T) {
+	items := []listItem{
+		{stored: &taskstore.StoredTask{Task: testTask("task-c", "context-1", a2a.TaskStateSubmitted)}, updatedAt: time.Date(2026, 8, 6, 9, 0, 0, 0, time.UTC)},
+		{stored: &taskstore.StoredTask{Task: testTask("task-b", "context-1", a2a.TaskStateSubmitted)}, updatedAt: time.Date(2026, 8, 6, 8, 0, 0, 0, time.UTC)},
+		{stored: &taskstore.StoredTask{Task: testTask("task-a", "context-1", a2a.TaskStateSubmitted)}, updatedAt: time.Date(2026, 8, 6, 7, 0, 0, 0, time.UTC)},
+	}
+	pager, err := newTaskPager(2, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, nextToken, err := pager.page(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := listItemIDs(first); !reflect.DeepEqual(got, []a2a.TaskID{"task-c", "task-b"}) || nextToken == "" {
+		t.Fatalf("first page IDs = %v, token = %q", got, nextToken)
+	}
+
+	pager, err = newTaskPager(2, nextToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, nextToken, err := pager.page(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := listItemIDs(second); !reflect.DeepEqual(got, []a2a.TaskID{"task-a"}) || nextToken != "" {
+		t.Fatalf("second page IDs = %v, token = %q", got, nextToken)
+	}
+}
+
+func listItemIDs(items []listItem) []a2a.TaskID {
+	ids := make([]a2a.TaskID, len(items))
+	for i, item := range items {
+		ids[i] = item.stored.Task.ID
+	}
+	return ids
+}
+
 func TestStoreListPaginatesByRecordTimeThenTaskID(t *testing.T) {
 	for _, factory := range backendFactories(t) {
 		t.Run(factory.name, func(t *testing.T) {
