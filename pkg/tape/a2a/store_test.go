@@ -620,9 +620,10 @@ func TestNewTaskPagerNormalizesAndValidatesPageSize(t *testing.T) {
 		wantErr  error
 	}{
 		{name: "default", pageSize: 0, wantSize: defaultPageSize},
-		{name: "maximum", pageSize: 100, wantSize: 100},
-		{name: "negative", pageSize: -1, wantErr: a2a.ErrInvalidRequest},
-		{name: "too large", pageSize: 101, wantErr: a2a.ErrInvalidRequest},
+		{name: "minimum", pageSize: minPageSize, wantSize: minPageSize},
+		{name: "maximum", pageSize: maxPageSize, wantSize: maxPageSize},
+		{name: "negative", pageSize: -minPageSize, wantErr: a2a.ErrInvalidRequest},
+		{name: "above maximum", pageSize: maxPageSize + 1, wantErr: a2a.ErrInvalidRequest},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

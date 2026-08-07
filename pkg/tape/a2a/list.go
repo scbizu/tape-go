@@ -13,8 +13,12 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 )
 
-const defaultPageSize = 50
-const defaultMaxHistoryLength = 100
+const (
+	minPageSize             = 1
+	defaultPageSize         = 50
+	maxPageSize             = 100
+	defaultMaxHistoryLength = 100
+)
 
 type listItem struct {
 	stored    *taskstore.StoredTask
@@ -34,8 +38,8 @@ type taskPager struct {
 func newTaskPager(pageSize int, token string) (taskPager, error) {
 	if pageSize == 0 {
 		pageSize = defaultPageSize
-	} else if pageSize < 1 || pageSize > 100 {
-		return taskPager{}, fmt.Errorf("a2a tape: page size must be between 1 and 100 inclusive, got %d: %w", pageSize, a2a.ErrInvalidRequest)
+	} else if pageSize < minPageSize || pageSize > maxPageSize {
+		return taskPager{}, fmt.Errorf("a2a tape: page size must be between %d and %d inclusive, got %d: %w", minPageSize, maxPageSize, pageSize, a2a.ErrInvalidRequest)
 	}
 	pager := taskPager{pageSize: pageSize}
 	if token == "" {
