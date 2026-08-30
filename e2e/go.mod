@@ -1,6 +1,6 @@
 module github.com/scbizu/tape-go/e2e
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0
@@ -64,7 +64,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	golang.org/x/crypto v0.51.0 // indirect
-	golang.org/x/net v0.54.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	google.golang.org/api v0.279.0 // indirect
