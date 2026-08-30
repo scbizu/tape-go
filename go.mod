@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/a2aproject/a2a-go/v2 v2.3.1
 	github.com/cohesion-org/deepseek-go v1.4.0
+	github.com/cucumber/godog v0.15.1
 	github.com/go-playground/validator/v10 v10.30.2
 	github.com/simonfrey/jsonl v0.0.0-20240904112901-935399b9a740
 	github.com/spf13/afero v1.15.0
@@ -21,7 +22,6 @@ require (
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cucumber/gherkin/go/v26 v26.2.0 // indirect
-	github.com/cucumber/godog v0.15.1 // indirect
 	github.com/cucumber/messages/go/v21 v21.0.1 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
@@ -54,7 +54,9 @@ require (
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	golang.org/x/crypto v0.51.0 // indirect
+	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/net v0.54.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	google.golang.org/api v0.279.0 // indirect
