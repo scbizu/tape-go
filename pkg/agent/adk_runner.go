@@ -97,72 +97,78 @@ func adkRequest(request taperunner.Request) (*model.LLMRequest, error) {
 }
 
 func adkContent(message taperunner.Message) (*genai.Content, error) {
-	payloads := 0
-	if message.Text != "" {
-		payloads++
-	}
-	if len(message.ToolCalls) > 0 {
-		payloads++
-	}
-	if len(message.ToolResults) > 0 {
-		payloads++
-	}
-	if payloads != 1 {
-		return nil, errors.New("message must contain exactly one of text, tool calls, or tool results")
-	}
-
 	switch message.Role {
 	case taperunner.RoleUser:
-		if message.Text == "" {
-			return nil, errors.New("user message must contain text")
-		}
-		return genai.NewContentFromText(message.Text, genai.RoleUser), nil
+		return adkUserContent(message)
 	case taperunner.RoleAssistant:
-		if message.Text != "" {
-			return genai.NewContentFromText(message.Text, genai.RoleModel), nil
-		}
-		if len(message.ToolCalls) == 0 {
-			return nil, errors.New("assistant message must contain text or tool calls")
-		}
-		parts := make([]*genai.Part, 0, len(message.ToolCalls))
-		for i, call := range message.ToolCalls {
-			args, err := decodeJSONObject(call.Arguments)
-			if err != nil {
-				return nil, fmt.Errorf("tool call %d arguments: %w", i, err)
-			}
-			if call.Name == "" {
-				return nil, fmt.Errorf("tool call %d has empty name", i)
-			}
-			parts = append(parts, &genai.Part{FunctionCall: &genai.FunctionCall{
-				ID: call.ID, Name: call.Name, Args: args,
-			}})
-		}
-		return &genai.Content{Role: genai.RoleModel, Parts: parts}, nil
+		return adkAssistantContent(message)
 	case taperunner.RoleTool:
-		if len(message.ToolResults) == 0 {
-			return nil, errors.New("tool message must contain tool results")
-		}
-		parts := make([]*genai.Part, 0, len(message.ToolResults))
-		for i, result := range message.ToolResults {
-			if result.Name == "" {
-				return nil, fmt.Errorf("tool result %d has empty name", i)
-			}
-			payload, err := decodeJSONValue(result.Result)
-			if err != nil {
-				return nil, fmt.Errorf("tool result %d payload: %w", i, err)
-			}
-			response, ok := payload.(map[string]any)
-			if !ok {
-				response = map[string]any{"output": payload}
-			}
-			parts = append(parts, &genai.Part{FunctionResponse: &genai.FunctionResponse{
-				ID: result.ID, Name: result.Name, Response: response,
-			}})
-		}
-		return &genai.Content{Role: genai.RoleUser, Parts: parts}, nil
+		return adkToolContent(message)
 	default:
 		return nil, fmt.Errorf("unsupported role %q", message.Role)
 	}
+}
+
+func adkUserContent(message taperunner.Message) (*genai.Content, error) {
+	if message.Text == "" || len(message.ToolCalls) > 0 || len(message.ToolResults) > 0 {
+		return nil, errors.New("user message must contain only text")
+	}
+	return genai.NewContentFromText(message.Text, genai.RoleUser), nil
+}
+
+func adkAssistantContent(message taperunner.Message) (*genai.Content, error) {
+	if len(message.ToolResults) > 0 {
+		return nil, errors.New("assistant message must contain exactly one of text or tool calls")
+	}
+	if message.Text != "" {
+		if len(message.ToolCalls) > 0 {
+			return nil, errors.New("assistant message must contain exactly one of text or tool calls")
+		}
+		return genai.NewContentFromText(message.Text, genai.RoleModel), nil
+	}
+	if len(message.ToolCalls) == 0 {
+		return nil, errors.New("assistant message must contain exactly one of text or tool calls")
+	}
+
+	parts := make([]*genai.Part, 0, len(message.ToolCalls))
+	for i, call := range message.ToolCalls {
+		args, err := decodeJSONObject(call.Arguments)
+		if err != nil {
+			return nil, fmt.Errorf("tool call %d arguments: %w", i, err)
+		}
+		if call.Name == "" {
+			return nil, fmt.Errorf("tool call %d has empty name", i)
+		}
+		parts = append(parts, &genai.Part{FunctionCall: &genai.FunctionCall{
+			ID: call.ID, Name: call.Name, Args: args,
+		}})
+	}
+	return &genai.Content{Role: genai.RoleModel, Parts: parts}, nil
+}
+
+func adkToolContent(message taperunner.Message) (*genai.Content, error) {
+	if message.Text != "" || len(message.ToolCalls) > 0 || len(message.ToolResults) == 0 {
+		return nil, errors.New("tool message must contain only tool results")
+	}
+
+	parts := make([]*genai.Part, 0, len(message.ToolResults))
+	for i, result := range message.ToolResults {
+		if result.Name == "" {
+			return nil, fmt.Errorf("tool result %d has empty name", i)
+		}
+		payload, err := decodeJSONValue(result.Result)
+		if err != nil {
+			return nil, fmt.Errorf("tool result %d payload: %w", i, err)
+		}
+		response, ok := payload.(map[string]any)
+		if !ok {
+			response = map[string]any{"output": payload}
+		}
+		parts = append(parts, &genai.Part{FunctionResponse: &genai.FunctionResponse{
+			ID: result.ID, Name: result.Name, Response: response,
+		}})
+	}
+	return &genai.Content{Role: genai.RoleUser, Parts: parts}, nil
 }
 
 func neutralResponse(content *genai.Content) (taperunner.Response, error) {
