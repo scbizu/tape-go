@@ -19,10 +19,7 @@ func TestADKRunnerReturnsFinalOutput(t *testing.T) {
 	model := &fakeADKModel{responses: []*model.LLMResponse{{
 		Content: genai.NewContentFromText("done", genai.RoleModel),
 	}}}
-	runner, err := NewADKRunner(model)
-	if err != nil {
-		t.Fatal(err)
-	}
+	runner := NewADKRunner(model)
 
 	response, err := runner.RunTurn(context.Background(), taperunner.Request{
 		SystemInstruction: "be concise",
@@ -51,10 +48,7 @@ func TestADKRunnerReturnsToolCallsWithoutExecutingThem(t *testing.T) {
 			ID: "call-1", Name: "search", Args: map[string]any{"query": "tape"},
 		}}},
 	}}}}
-	runner, err := NewADKRunner(model)
-	if err != nil {
-		t.Fatal(err)
-	}
+	runner := NewADKRunner(model)
 
 	response, err := runner.RunTurn(context.Background(), taperunner.Request{
 		Messages: []taperunner.Message{{Role: taperunner.RoleUser, Text: "find it"}},
@@ -85,12 +79,9 @@ func TestADKRunnerConvertsToolResultsIntoNextTurn(t *testing.T) {
 	model := &fakeADKModel{responses: []*model.LLMResponse{{
 		Content: genai.NewContentFromText("final", genai.RoleModel),
 	}}}
-	runner, err := NewADKRunner(model)
-	if err != nil {
-		t.Fatal(err)
-	}
+	runner := NewADKRunner(model)
 
-	_, err = runner.RunTurn(context.Background(), taperunner.Request{Messages: []taperunner.Message{
+	_, err := runner.RunTurn(context.Background(), taperunner.Request{Messages: []taperunner.Message{
 		{Role: taperunner.RoleAssistant, ToolCalls: []taperunner.ToolCall{{
 			ID: "call-1", Name: "search", Arguments: json.RawMessage(`{"query":"tape"}`),
 		}}},
@@ -131,10 +122,7 @@ func TestADKRunnerRejectsMixedAndEmptyResponses(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			runner, err := NewADKRunner(&fakeADKModel{responses: []*model.LLMResponse{test.response}})
-			if err != nil {
-				t.Fatal(err)
-			}
+			runner := NewADKRunner(&fakeADKModel{responses: []*model.LLMResponse{test.response}})
 			if _, err := runner.RunTurn(context.Background(), taperunner.Request{
 				Messages: []taperunner.Message{{Role: taperunner.RoleUser, Text: "hello"}},
 			}); err == nil {
@@ -148,11 +136,8 @@ func TestADKRunnerPropagatesModelError(t *testing.T) {
 	t.Parallel()
 
 	want := errors.New("model unavailable")
-	runner, err := NewADKRunner(&fakeADKModel{err: want})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = runner.RunTurn(context.Background(), taperunner.Request{
+	runner := NewADKRunner(&fakeADKModel{err: want})
+	_, err := runner.RunTurn(context.Background(), taperunner.Request{
 		Messages: []taperunner.Message{{Role: taperunner.RoleUser, Text: "hello"}},
 	})
 	if !errors.Is(err, want) {
@@ -160,16 +145,8 @@ func TestADKRunnerPropagatesModelError(t *testing.T) {
 	}
 }
 
-func TestADKRunnerValidatesConstructionAndRequest(t *testing.T) {
+func TestADKRunnerValidatesRequest(t *testing.T) {
 	t.Parallel()
-
-	if _, err := NewADKRunner(nil); err == nil {
-		t.Fatal("NewADKRunner(nil) error = nil")
-	}
-	var typedNil *fakeADKModel
-	if _, err := NewADKRunner(typedNil); err == nil {
-		t.Fatal("NewADKRunner(typed nil) error = nil")
-	}
 
 	tests := []struct {
 		name    string
@@ -204,12 +181,9 @@ func TestADKRunnerValidatesConstructionAndRequest(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			runner, err := NewADKRunner(&fakeADKModel{responses: []*model.LLMResponse{{
+			runner := NewADKRunner(&fakeADKModel{responses: []*model.LLMResponse{{
 				Content: genai.NewContentFromText("done", genai.RoleModel),
 			}}})
-			if err != nil {
-				t.Fatal(err)
-			}
 			if _, err := runner.RunTurn(context.Background(), test.request); err == nil {
 				t.Fatal("RunTurn() error = nil, want request validation error")
 			}
@@ -243,10 +217,7 @@ func TestADKRunnerRejectsInvalidModelSequence(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			runner, err := NewADKRunner(&fakeADKModel{responses: test.responses})
-			if err != nil {
-				t.Fatal(err)
-			}
+			runner := NewADKRunner(&fakeADKModel{responses: test.responses})
 			if _, err := runner.RunTurn(context.Background(), taperunner.Request{
 				Messages: []taperunner.Message{{Role: taperunner.RoleUser, Text: "hello"}},
 			}); err == nil {

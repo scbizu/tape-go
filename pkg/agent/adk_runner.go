@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 
 	"google.golang.org/adk/model"
@@ -18,30 +17,11 @@ type ADKRunner struct {
 	model model.LLM
 }
 
-func NewADKRunner(llm model.LLM) (*ADKRunner, error) {
-	if isNilADKModel(llm) {
-		return nil, errors.New("agent: nil ADK model")
-	}
-	return &ADKRunner{model: llm}, nil
-}
-
-func isNilADKModel(llm model.LLM) bool {
-	if llm == nil {
-		return true
-	}
-	value := reflect.ValueOf(llm)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return value.IsNil()
-	default:
-		return false
-	}
+func NewADKRunner(llm model.LLM) *ADKRunner {
+	return &ADKRunner{model: llm}
 }
 
 func (r *ADKRunner) RunTurn(ctx context.Context, request taperunner.Request) (taperunner.Response, error) {
-	if r == nil || r.model == nil {
-		return taperunner.Response{}, errors.New("agent: nil ADK runner")
-	}
 	req, err := adkRequest(request)
 	if err != nil {
 		return taperunner.Response{}, err
