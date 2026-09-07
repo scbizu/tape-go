@@ -7,6 +7,7 @@ require (
 	github.com/cohesion-org/deepseek-go v1.4.0
 	github.com/cucumber/godog v0.15.1
 	github.com/go-playground/validator/v10 v10.30.2
+	github.com/google/jsonschema-go v0.4.2
 	github.com/simonfrey/jsonl v0.0.0-20240904112901-935399b9a740
 	github.com/spf13/afero v1.15.0
 	go.etcd.io/bbolt v1.5.0
@@ -31,7 +32,6 @@ require (
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/gofrs/uuid v4.3.1+incompatible // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/safehtml v0.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect

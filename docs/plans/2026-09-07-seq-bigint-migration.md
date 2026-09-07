@@ -8,6 +8,7 @@
 - Ordering is numeric, and successor calculation never wraps.
 - JSON writes sequences as decimal strings. Readers accept both the new string form and legacy `uint64` JSON numbers.
 - Half-open ranges remain `[SeqS, SeqE)` and use `Seq.Next()` for exclusive ends.
+- Public command argument structs use `entry.Seq` directly. Sequence parsing and canonical-value validation belong to the Seq codec; the ADK adapter only overrides schema inference to describe the decimal-string wire shape because the value's representation is intentionally private.
 
 ## Storage migration
 

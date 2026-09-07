@@ -60,7 +60,7 @@ func TestRewindTool(t *testing.T) {
 	if got != (view.EntryRange{SeqS: toolSeq(1), SeqE: toolSeq(4)}) {
 		t.Fatalf("two-anchor rewind = %#v, want [1,4)", got)
 	}
-	got = runRewindCommand(t, commands, ctx, RewindArgs{FromSeq: "2", MaxAnchors: 2})
+	got = runRewindCommand(t, commands, ctx, RewindArgs{FromSeq: toolSeq(2), MaxAnchors: 2})
 	if got != (view.EntryRange{SeqS: toolSeq(1), SeqE: toolSeq(2)}) {
 		t.Fatalf("rewind from seq 2 = %#v, want [1,2)", got)
 	}

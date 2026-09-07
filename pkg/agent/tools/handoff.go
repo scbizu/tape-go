@@ -18,9 +18,9 @@ import (
 
 // HandoffArgs configures the handoff command's anchor payload and range.
 type HandoffArgs struct {
-	Summary string `json:"summary,omitempty" jsonschema:"Summary for the archived context window."`
-	SeqS    string `json:"seq_s,omitempty" jsonschema:"First archived entry sequence as a decimal string; empty or zero uses the current tape view."`
-	SeqE    string `json:"seq_e,omitempty" jsonschema:"Exclusive archived entry sequence as a decimal string; empty or zero uses the next anchor sequence."`
+	Summary string    `json:"summary,omitempty"`
+	SeqS    entry.Seq `json:"seq_s,omitempty"`
+	SeqE    entry.Seq `json:"seq_e,omitempty"`
 }
 
 type handoffCommand struct {
@@ -65,23 +65,11 @@ func (c handoffCommand) Run(ctx context.Context, _ tapeagent.AgentIO, call tapea
 	if anchor.SeqS.IsZero() {
 		anchor.SeqS = entry.SeqFromUint64(1)
 	}
-	if args.SeqS != "" {
-		seq, err := entry.ParseSeq(args.SeqS)
-		if err != nil {
-			return tapeagent.CommandResult{}, fmt.Errorf("agent: handoff seq_s: %w", err)
-		}
-		if !seq.IsZero() {
-			anchor.SeqS = seq
-		}
+	if !args.SeqS.IsZero() {
+		anchor.SeqS = args.SeqS
 	}
-	if args.SeqE != "" {
-		seq, err := entry.ParseSeq(args.SeqE)
-		if err != nil {
-			return tapeagent.CommandResult{}, fmt.Errorf("agent: handoff seq_e: %w", err)
-		}
-		if !seq.IsZero() {
-			anchor.SeqE = seq
-		}
+	if !args.SeqE.IsZero() {
+		anchor.SeqE = args.SeqE
 	}
 	if anchor.SeqS.Cmp(anchor.SeqE) > 0 {
 		return tapeagent.CommandResult{}, fmt.Errorf(
@@ -111,8 +99,10 @@ func NewHandoffTool(commands tapeagent.CommandRunner) (tool.Tool, error) {
 		return nil, errors.New("agent: nil command runner")
 	}
 	return functiontool.New(functiontool.Config{
-		Name:        "handoff",
-		Description: "Writes a handoff anchor for the current tape context window.",
+		Name:         "handoff",
+		Description:  "Writes a handoff anchor for the current tape context window.",
+		InputSchema:  handoffInputSchema(),
+		OutputSchema: handoffOutputSchema(),
 	}, func(ctx tool.Context, args HandoffArgs) (entry.HandoffAnchor, error) {
 		result, err := commands.Command(ctx, nil, tapeagent.CommandCall{Name: "handoff", Args: args})
 		if err != nil {

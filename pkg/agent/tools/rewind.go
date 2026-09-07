@@ -19,8 +19,8 @@ import (
 
 // RewindArgs configures which handoff anchor range rewind should return.
 type RewindArgs struct {
-	FromSeq    string `json:"from_seq,omitempty" jsonschema:"Decimal entry sequence to rewind from; empty or zero means the latest entry."`
-	MaxAnchors uint8  `json:"max_anchors,omitempty" jsonschema:"Maximum anchors to rewind; zero defaults to one."`
+	FromSeq    entry.Seq `json:"from_seq,omitempty"`
+	MaxAnchors uint8     `json:"max_anchors,omitempty"`
 }
 
 type rewindCommand struct {
@@ -55,17 +55,9 @@ func (c rewindCommand) Run(ctx context.Context, _ tapeagent.AgentIO, call tapeag
 		tapeCtx = context.Background()
 	}
 	tapeCtx = owner.WithOwnerId(tapeCtx, c.tape.OwnerID)
-	fromSeq := entry.Seq{}
-	if args.FromSeq != "" {
-		var err error
-		fromSeq, err = entry.ParseSeq(args.FromSeq)
-		if err != nil {
-			return tapeagent.CommandResult{}, fmt.Errorf("agent: rewind from_seq: %w", err)
-		}
-	}
 	r, err := c.tape.Rewind(
 		tapeCtx,
-		storage.WithRewindFromSeq(fromSeq),
+		storage.WithRewindFromSeq(args.FromSeq),
 		storage.WithRewindMaxAnchors(args.MaxAnchors),
 	)
 	if errors.Is(err, storage.ErrNoAnchor) {
@@ -83,8 +75,10 @@ func NewRewindTool(commands tapeagent.CommandRunner) (tool.Tool, error) {
 		return nil, errors.New("agent: nil command runner")
 	}
 	return functiontool.New(functiontool.Config{
-		Name:        "rewind",
-		Description: "Returns an earlier context window range referenced by tape anchors.",
+		Name:         "rewind",
+		Description:  "Returns an earlier context window range referenced by tape anchors.",
+		InputSchema:  rewindInputSchema(),
+		OutputSchema: rewindOutputSchema(),
 	}, func(ctx tool.Context, args RewindArgs) (view.EntryRange, error) {
 		result, err := commands.Command(ctx, nil, tapeagent.CommandCall{Name: "rewind", Args: args})
 		if err != nil {

@@ -24,7 +24,7 @@ func TestHandoffCommandDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	anchor := runHandoffCommand(t, tapeagent.NewCommandRegistry(NewHandoffCommand(tape)), ctx, HandoffArgs{SeqS: "0", SeqE: "0"})
+	anchor := runHandoffCommand(t, tapeagent.NewCommandRegistry(NewHandoffCommand(tape)), ctx, HandoffArgs{})
 	if anchor != (entry.HandoffAnchor{SeqS: toolSeq(1), SeqE: toolSeq(2)}) {
 		t.Fatalf("handoff anchor = %#v, want [1,2)", anchor)
 	}
@@ -44,8 +44,8 @@ func TestHandoffCommandArgs(t *testing.T) {
 
 	anchor := runHandoffCommand(t, tapeagent.NewCommandRegistry(NewHandoffCommand(tape)), ctx, HandoffArgs{
 		Summary: "archived",
-		SeqS:    "7",
-		SeqE:    "9",
+		SeqS:    toolSeq(7),
+		SeqE:    toolSeq(9),
 	})
 	if anchor != (entry.HandoffAnchor{Summary: "archived", SeqS: toolSeq(7), SeqE: toolSeq(9)}) {
 		t.Fatalf("handoff anchor = %#v, want custom anchor", anchor)
