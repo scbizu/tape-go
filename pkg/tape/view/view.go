@@ -8,8 +8,8 @@ import (
 )
 
 type EntryRange struct {
-	SeqS uint64
-	SeqE uint64
+	SeqS entry.Seq
+	SeqE entry.Seq
 }
 
 // EntryView describes a scoped entry view assembler

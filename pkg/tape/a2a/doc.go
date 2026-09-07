@@ -22,11 +22,14 @@
 //		a2asrv.WithCallInterceptors(a2atape.NewPersistenceInterceptor(store)),
 //	)
 //
-// Tape sequence numbers back taskstore.TaskVersion values but remain private
-// implementation details; they are never protocol identifiers. Recovery uses
-// a per-owner projection that is rebuilt from Tape on first access and then
-// advanced by incrementally replaying new records. Corrupt, inconsistent, or
-// unknown-version records fail closed with their Tape sequence and record ID.
+// taskstore.TaskVersion is derived per Task from profile-v1 record order and is
+// independent from Tape's arbitrary-precision sequence. Create projects version
+// 1 and every later Task record projects the successor while PrevVersion retains
+// optimistic-concurrency validation. Recovery uses a per-owner projection that
+// is rebuilt from Tape on first access and then advanced by incrementally
+// replaying new records.
+// Corrupt, inconsistent, or unknown-version records fail closed with their Tape
+// sequence and record ID.
 //
 // Concurrency control is process-local per owner. Cross-process strong OCC
 // requires a future conditional-append/CAS capability in storage.TapeStorage.

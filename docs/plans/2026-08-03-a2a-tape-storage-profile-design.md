@@ -24,8 +24,8 @@ its own storage and identity boundary.
   push subscriber only after its Tape append succeeds.
 - Treat authentication as authoritative. `contextId`, `taskId`, and metadata
   supplied by a peer never determine the local Tape owner.
-- Keep local sequence numbers private. A Tape seq may back an internal task
-  version or cursor but is not an interoperable identifier.
+- Keep local sequence numbers private. Tape Seq is not an interoperable
+  identifier and is independent from the persisted task version.
 - Make recovery deterministic. Replaying the same accepted records produces the
   same current Task, history, artifacts, and version.
 - Keep the profile thin. Transport, execution, discovery, and orchestration stay
@@ -137,8 +137,9 @@ becomes another source of truth.
 The store preserves the SDK's optimistic concurrency control. `Update` compares
 `PrevVersion` with the current stored version. A mismatch returns
 `taskstore.ErrConcurrentModification`; the official server stack decides whether
-to retry or cancel the execution. A committed Tape seq may serve as the internal
-`TaskVersion` if comparison remains monotonic for that Task.
+to retry or cancel the execution. `TaskVersion` is projected per Task from its
+record order: Create is version 1 and every later record increments it. It is
+therefore independent from Tape Seq without adding a persisted Version field.
 
 The following rules are mandatory:
 

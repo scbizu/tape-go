@@ -53,15 +53,15 @@ func TestRewindTool(t *testing.T) {
 
 	viewBefore := tape.View
 	got := runRewindCommand(t, commands, ctx, RewindArgs{})
-	if got != (view.EntryRange{SeqS: 3, SeqE: 4}) {
+	if got != (view.EntryRange{SeqS: toolSeq(3), SeqE: toolSeq(4)}) {
 		t.Fatalf("default rewind = %#v, want [3,4)", got)
 	}
 	got = runRewindCommand(t, commands, ctx, RewindArgs{MaxAnchors: 2})
-	if got != (view.EntryRange{SeqS: 1, SeqE: 4}) {
+	if got != (view.EntryRange{SeqS: toolSeq(1), SeqE: toolSeq(4)}) {
 		t.Fatalf("two-anchor rewind = %#v, want [1,4)", got)
 	}
-	got = runRewindCommand(t, commands, ctx, RewindArgs{FromSeq: 2, MaxAnchors: 2})
-	if got != (view.EntryRange{SeqS: 1, SeqE: 2}) {
+	got = runRewindCommand(t, commands, ctx, RewindArgs{FromSeq: toolSeq(2), MaxAnchors: 2})
+	if got != (view.EntryRange{SeqS: toolSeq(1), SeqE: toolSeq(2)}) {
 		t.Fatalf("rewind from seq 2 = %#v, want [1,2)", got)
 	}
 	if tape.View != viewBefore {

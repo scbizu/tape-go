@@ -18,9 +18,9 @@ import (
 
 // HandoffArgs configures the handoff command's anchor payload and range.
 type HandoffArgs struct {
-	Summary string `json:"summary,omitempty" jsonschema:"Summary for the archived context window."`
-	SeqS    uint64 `json:"seq_s,omitempty" jsonschema:"First archived entry sequence; zero uses the current tape view."`
-	SeqE    uint64 `json:"seq_e,omitempty" jsonschema:"Exclusive archived entry sequence; zero uses the next anchor sequence."`
+	Summary string    `json:"summary,omitempty"`
+	SeqS    entry.Seq `json:"seq_s,omitempty"`
+	SeqE    entry.Seq `json:"seq_e,omitempty"`
 }
 
 type handoffCommand struct {
@@ -52,28 +52,28 @@ func (c handoffCommand) Run(ctx context.Context, _ tapeagent.AgentIO, call tapea
 	if err != nil {
 		return tapeagent.CommandResult{}, fmt.Errorf("tape: %w", err)
 	}
-	if tv.Scope.SeqE == 0 {
+	if tv.Scope.SeqE.IsZero() {
 		return tapeagent.CommandResult{}, fmt.Errorf("tape: handoff empty tape")
 	}
 
-	anchorSeq := entry.NextEntryID(tv.Scope.SeqE)
+	anchorSeq := tv.Scope.SeqE.Next()
 	anchor := entry.HandoffAnchor{
 		Summary: args.Summary,
 		SeqS:    c.tape.View.SeqS,
 		SeqE:    anchorSeq,
 	}
-	if anchor.SeqS == 0 {
-		anchor.SeqS = 1
+	if anchor.SeqS.IsZero() {
+		anchor.SeqS = entry.SeqFromUint64(1)
 	}
-	if args.SeqS != 0 {
+	if !args.SeqS.IsZero() {
 		anchor.SeqS = args.SeqS
 	}
-	if args.SeqE != 0 {
+	if !args.SeqE.IsZero() {
 		anchor.SeqE = args.SeqE
 	}
-	if anchor.SeqS > anchor.SeqE {
+	if anchor.SeqS.Cmp(anchor.SeqE) > 0 {
 		return tapeagent.CommandResult{}, fmt.Errorf(
-			"tape: invalid handoff range [%d,%d)",
+			"tape: invalid handoff range [%s,%s)",
 			anchor.SeqS,
 			anchor.SeqE,
 		)
@@ -89,7 +89,7 @@ func (c handoffCommand) Run(ctx context.Context, _ tapeagent.AgentIO, call tapea
 	); err != nil {
 		return tapeagent.CommandResult{}, fmt.Errorf("tape: %w", err)
 	}
-	c.tape.SetView(view.EntryRange{SeqS: entry.NextEntryID(anchorSeq)})
+	c.tape.SetView(view.EntryRange{SeqS: anchorSeq.Next()})
 	return tapeagent.CommandResult{Data: anchor}, nil
 }
 
@@ -99,8 +99,10 @@ func NewHandoffTool(commands tapeagent.CommandRunner) (tool.Tool, error) {
 		return nil, errors.New("agent: nil command runner")
 	}
 	return functiontool.New(functiontool.Config{
-		Name:        "handoff",
-		Description: "Writes a handoff anchor for the current tape context window.",
+		Name:         "handoff",
+		Description:  "Writes a handoff anchor for the current tape context window.",
+		InputSchema:  handoffInputSchema(),
+		OutputSchema: handoffOutputSchema(),
 	}, func(ctx tool.Context, args HandoffArgs) (entry.HandoffAnchor, error) {
 		result, err := commands.Command(ctx, nil, tapeagent.CommandCall{Name: "handoff", Args: args})
 		if err != nil {

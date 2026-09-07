@@ -6,6 +6,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 )
 
@@ -30,8 +31,8 @@ func TestPersistenceInterceptorPersistsTasklessMessageOnce(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tape.Scope.SeqE != 1 {
-				t.Fatalf("last seq = %d, want 1; direct message was not deduplicated", tape.Scope.SeqE)
+			if tape.Scope.SeqE != entry.SeqFromUint64(1) {
+				t.Fatalf("last seq = %s, want 1; direct message was not deduplicated", tape.Scope.SeqE)
 			}
 		})
 	}
@@ -64,8 +65,8 @@ func TestPersistenceInterceptorSkipsNonDirectResponses(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tape.Scope.SeqE != 0 {
-				t.Fatalf("last seq = %d, want 0; non-direct response was persisted", tape.Scope.SeqE)
+			if !tape.Scope.SeqE.IsZero() {
+				t.Fatalf("last seq = %s, want 0; non-direct response was persisted", tape.Scope.SeqE)
 			}
 		})
 	}

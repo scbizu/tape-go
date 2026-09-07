@@ -73,14 +73,14 @@ func TestTapeAdapterSessionAndContextWindow(t *testing.T) {
 	if err := adapter.AppendEvent(ctx, created.Session, event); err != nil {
 		t.Fatal(err)
 	}
-	payload, err := json.Marshal(entry.HandoffAnchor{SeqS: 1, SeqE: 2})
+	payload, err := json.Marshal(entry.HandoffAnchor{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := adapter.Tape.Store(ctx, entry.NewAnchor(2, ownerID, entry.AnchorKindHandoff, payload)); err != nil {
+	if err := adapter.Tape.Store(ctx, entry.NewAnchor(entry.SeqFromUint64(2), ownerID, entry.AnchorKindHandoff, payload)); err != nil {
 		t.Fatal(err)
 	}
-	adapter.Tape.SetView(view.EntryRange{SeqS: 3})
+	adapter.Tape.SetView(view.EntryRange{SeqS: entry.SeqFromUint64(3)})
 	event = session.NewEvent("invocation-b")
 	event.Author = owner.SystemAgent
 	event.Timestamp = agentTimestamp

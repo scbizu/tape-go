@@ -17,6 +17,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 	"github.com/cucumber/godog"
+	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
@@ -64,8 +65,8 @@ type featureCase struct {
 	competingSuccesses int
 	competingConflicts int
 	retryVersion       taskstore.TaskVersion
-	headBeforeRetry    uint64
-	headAfterRetry     uint64
+	headBeforeRetry    entry.Seq
+	headAfterRetry     entry.Seq
 
 	principalA context.Context
 	principalB context.Context
@@ -288,7 +289,7 @@ func (s *featureState) assertConcurrentUpdateOutcome() error {
 			return fmt.Errorf("feature: %s outcomes successes=%d conflicts=%d", testCase.kind, testCase.competingSuccesses, testCase.competingConflicts)
 		}
 		if testCase.headAfterRetry != testCase.headBeforeRetry {
-			return fmt.Errorf("feature: %s retry appended a record: head %d -> %d", testCase.kind, testCase.headBeforeRetry, testCase.headAfterRetry)
+			return fmt.Errorf("feature: %s retry appended a record: head %s -> %s", testCase.kind, testCase.headBeforeRetry, testCase.headAfterRetry)
 		}
 	}
 	return nil

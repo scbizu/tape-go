@@ -25,10 +25,10 @@ func TestHandoffCommandDefault(t *testing.T) {
 	}
 
 	anchor := runHandoffCommand(t, tapeagent.NewCommandRegistry(NewHandoffCommand(tape)), ctx, HandoffArgs{})
-	if anchor != (entry.HandoffAnchor{SeqS: 1, SeqE: 2}) {
+	if anchor != (entry.HandoffAnchor{SeqS: toolSeq(1), SeqE: toolSeq(2)}) {
 		t.Fatalf("handoff anchor = %#v, want [1,2)", anchor)
 	}
-	if tape.View != (view.EntryRange{SeqS: 3}) {
+	if tape.View != (view.EntryRange{SeqS: toolSeq(3)}) {
 		t.Fatalf("tape view = %#v, want SeqS 3", tape.View)
 	}
 }
@@ -44,14 +44,14 @@ func TestHandoffCommandArgs(t *testing.T) {
 
 	anchor := runHandoffCommand(t, tapeagent.NewCommandRegistry(NewHandoffCommand(tape)), ctx, HandoffArgs{
 		Summary: "archived",
-		SeqS:    7,
-		SeqE:    9,
+		SeqS:    toolSeq(7),
+		SeqE:    toolSeq(9),
 	})
-	if anchor != (entry.HandoffAnchor{Summary: "archived", SeqS: 7, SeqE: 9}) {
+	if anchor != (entry.HandoffAnchor{Summary: "archived", SeqS: toolSeq(7), SeqE: toolSeq(9)}) {
 		t.Fatalf("handoff anchor = %#v, want custom anchor", anchor)
 	}
 
-	entries, err := tape.Range(ctx, view.EntryRange{SeqS: 2, SeqE: 3})
+	entries, err := tape.Range(ctx, view.EntryRange{SeqS: toolSeq(2), SeqE: toolSeq(3)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,6 +62,10 @@ func TestHandoffCommandArgs(t *testing.T) {
 	if stored != anchor {
 		t.Fatalf("stored anchor = %#v, want %#v", stored, anchor)
 	}
+}
+
+func toolSeq(value uint64) entry.Seq {
+	return entry.SeqFromUint64(value)
 }
 
 func TestHandoffCommandEmptyTape(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 
 	tapeagent "github.com/scbizu/tape-go/pkg/agent"
 	"github.com/scbizu/tape-go/pkg/tape"
+	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
@@ -18,8 +19,8 @@ import (
 
 // RewindArgs configures which handoff anchor range rewind should return.
 type RewindArgs struct {
-	FromSeq    uint64 `json:"from_seq,omitempty" jsonschema:"Entry sequence to rewind from; zero means the latest entry."`
-	MaxAnchors uint8  `json:"max_anchors,omitempty" jsonschema:"Maximum anchors to rewind; zero defaults to one."`
+	FromSeq    entry.Seq `json:"from_seq,omitempty"`
+	MaxAnchors uint8     `json:"max_anchors,omitempty"`
 }
 
 type rewindCommand struct {
@@ -74,8 +75,10 @@ func NewRewindTool(commands tapeagent.CommandRunner) (tool.Tool, error) {
 		return nil, errors.New("agent: nil command runner")
 	}
 	return functiontool.New(functiontool.Config{
-		Name:        "rewind",
-		Description: "Returns an earlier context window range referenced by tape anchors.",
+		Name:         "rewind",
+		Description:  "Returns an earlier context window range referenced by tape anchors.",
+		InputSchema:  rewindInputSchema(),
+		OutputSchema: rewindOutputSchema(),
 	}, func(ctx tool.Context, args RewindArgs) (view.EntryRange, error) {
 		result, err := commands.Command(ctx, nil, tapeagent.CommandCall{Name: "rewind", Args: args})
 		if err != nil {
