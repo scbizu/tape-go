@@ -112,7 +112,7 @@ Add:
 
 NewStore rejects nil Storage or Authenticator. Each operation authenticates, rejects an empty principal with a2a.ErrUnauthenticated, derives owner.WithOwnerId(ctx, principal), and calls Storage.Init once per principal.
 
-Create holds the mutex, replays that owner, rejects an existing Task ID, appends one a2a:task record, and returns its persisted TaskVersion. Get returns a JSON-deep-copy of the latest Task record. Tape Seq backed TaskVersion in profile v1; profile v2 decouples the two domains.
+Create holds the mutex, replays that owner, rejects an existing Task ID, appends one a2a:task record, and returns its persisted TaskVersion. Get returns a JSON-deep-copy of the latest Task record. The breaking Seq migration redefines profile v1 to persist TaskVersion independently; older v1 records without that field are rejected.
 
 **Step 4: Verify GREEN and commit**
 

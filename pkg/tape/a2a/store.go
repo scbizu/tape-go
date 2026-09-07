@@ -258,13 +258,9 @@ func (s *Store) syncProjection(ctx context.Context, cached *ownerProjection) (*p
 		if err != nil {
 			return nil, fmt.Errorf("a2a tape: replay seq %s record %s: %w", tapeEntry.GetID(), recordIdentityFromEntry(tapeEntry), err)
 		}
-		version, err := taskVersionForRecord(record, tapeEntry.GetID())
-		if err != nil {
-			return nil, fmt.Errorf("a2a tape: replay seq %s record %s: %w", tapeEntry.GetID(), record.RecordID, err)
-		}
 		decoded = append(decoded, decodedRecord{
 			record:  record,
-			version: version,
+			version: record.Version,
 			updated: tapeEntry.GetTimestamp(),
 		})
 	}
@@ -296,17 +292,6 @@ func validateReplayRange(entries []entry.EntryLike, start, head entry.Seq) error
 	return nil
 }
 
-func taskVersionForRecord(record *tapeRecord, seq entry.Seq) (taskstore.TaskVersion, error) {
-	if record.ProfileVersion == profileVersion {
-		return record.Version, nil
-	}
-	legacy, ok := seq.Uint64()
-	if !ok || legacy > uint64(maxTaskVersion) {
-		return taskstore.TaskVersionMissing, errors.New("legacy Tape sequence does not fit TaskVersion")
-	}
-	return taskstore.TaskVersion(legacy), nil
-}
-
 func nextTaskVersion(current taskstore.TaskVersion) (taskstore.TaskVersion, error) {
 	if current == maxTaskVersion {
 		return taskstore.TaskVersionMissing, errors.New("a2a tape: task version exhausted")
@@ -321,21 +306,19 @@ func applyRecord(state *projection, record *tapeRecord, version taskstore.TaskVe
 			if record.PrevVersion != taskstore.TaskVersionMissing {
 				return errors.New("first task record has a previous version")
 			}
-			if record.ProfileVersion == profileVersion && version != 1 {
+			if version != 1 {
 				return fmt.Errorf("first task record version is %d, want 1", version)
 			}
 		} else {
 			if record.PrevVersion != taskstore.TaskVersionMissing && record.PrevVersion != previous.Version {
 				return fmt.Errorf("previous version is %d, want %d", record.PrevVersion, previous.Version)
 			}
-			if record.ProfileVersion == profileVersion {
-				want, err := nextTaskVersion(previous.Version)
-				if err != nil {
-					return err
-				}
-				if version != want {
-					return fmt.Errorf("task version is %d, want %d", version, want)
-				}
+			want, err := nextTaskVersion(previous.Version)
+			if err != nil {
+				return err
+			}
+			if version != want {
+				return fmt.Errorf("task version is %d, want %d", version, want)
 			}
 		}
 		state.tasks[record.TaskID] = &taskstore.StoredTask{Task: record.Task, Version: version}

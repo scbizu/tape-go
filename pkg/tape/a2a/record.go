@@ -13,9 +13,8 @@ import (
 )
 
 const (
-	legacyProfileVersion = 1
-	profileVersion       = 2
-	recordExtension      = "a2a:record"
+	profileVersion  = 1
+	recordExtension = "a2a:record"
 
 	kindTask           entry.EntryKind = "a2a:task"
 	kindMessage        entry.EntryKind = "a2a:message"
@@ -24,7 +23,7 @@ const (
 )
 
 type tapeRecord struct {
-	ProfileVersion int                   `json:"profileVersion" validate:"oneof=1 2"`
+	ProfileVersion int                   `json:"profileVersion" validate:"eq=1"`
 	A2AVersion     string                `json:"a2aVersion" validate:"eq=1.0"`
 	RecordID       string                `json:"recordId" validate:"required,len=64,hexadecimal"`
 	Owner          string                `json:"owner" validate:"required"`
@@ -189,7 +188,7 @@ func (r *tapeRecord) validate(e entry.CustomEntry) error {
 	if err := validateStructure("record", r); err != nil {
 		return err
 	}
-	if r.ProfileVersion != legacyProfileVersion && r.ProfileVersion != profileVersion {
+	if r.ProfileVersion != profileVersion {
 		return fmt.Errorf("a2a tape: unsupported profile version %d", r.ProfileVersion)
 	}
 	if r.A2AVersion != string(a2a.Version) {
@@ -210,7 +209,7 @@ func (r *tapeRecord) validate(e entry.CustomEntry) error {
 	if r.Task == nil {
 		return errors.New("a2a tape: task record is incomplete")
 	}
-	if r.ProfileVersion == profileVersion && r.Version == taskstore.TaskVersionMissing {
+	if r.Version == taskstore.TaskVersionMissing {
 		return errors.New("a2a tape: task record version is missing")
 	}
 	if r.TaskID != r.Task.ID || r.ContextID != r.Task.ContextID {

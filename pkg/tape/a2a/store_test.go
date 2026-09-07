@@ -257,7 +257,7 @@ func TestStoreTaskVersionIsIndependentFromTapeSequence(t *testing.T) {
 	}
 }
 
-func TestStoreReplaysLegacyProfileVersionFromCheckedSequence(t *testing.T) {
+func TestStoreRejectsProfileV1RecordWithoutPersistedVersion(t *testing.T) {
 	for _, factory := range backendFactories(t) {
 		t.Run(factory.name, func(t *testing.T) {
 			backend := factory.open(t)
@@ -266,25 +266,19 @@ func TestStoreReplaysLegacyProfileVersionFromCheckedSequence(t *testing.T) {
 			if err := backend.Init(ownerCtx); err != nil {
 				t.Fatal(err)
 			}
-			for range 6 {
-				if err := backend.Store(ownerCtx, entry.NewEntry(entry.WithEntryOwner("owner-a"))); err != nil {
-					t.Fatal(err)
-				}
-			}
-			task := testTask("legacy-task", "context-1", a2a.TaskStateSubmitted)
+			task := testTask("old-v1-task", "context-1", a2a.TaskStateSubmitted)
 			record, err := newTaskRecord("owner-a", task, task, taskstore.TaskVersionMissing)
 			if err != nil {
 				t.Fatal(err)
 			}
-			record.ProfileVersion = legacyProfileVersion
 			record.Version = taskstore.TaskVersionMissing
 			if err := backend.Store(ownerCtx, record.entry()); err != nil {
 				t.Fatal(err)
 			}
 
-			got, err := newTestStore(t, backend).Get(authenticatedAs("owner-a"), task.ID)
-			if err != nil || got.Version != 7 {
-				t.Fatalf("legacy Get() = %#v, %v; want version 7", got, err)
+			_, err = newTestStore(t, backend).Get(authenticatedAs("owner-a"), task.ID)
+			if err == nil || !strings.Contains(err.Error(), "version is missing") {
+				t.Fatalf("Get() error = %v, want missing persisted version", err)
 			}
 		})
 	}

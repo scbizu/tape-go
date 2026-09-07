@@ -19,7 +19,7 @@ The compatibility direction is forward-only. After this version appends a JSONL 
 
 ## A2A versions
 
-`taskstore.TaskVersion` is a separate persisted domain. New A2A records carry their own task version. Legacy profile-v1 records recover their historical version from a checked Tape Seq conversion; new records never cast Seq to `int64`.
+`taskstore.TaskVersion` is a separate persisted domain. A2A profile v1 is redefined in place so task records carry their own version and never cast Tape Seq to `int64`. There is no profile v2 and no compatibility path for older profile-v1 records without a persisted version; replay rejects them fail-closed.
 
 ## Compatibility boundary
 
