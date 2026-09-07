@@ -22,12 +22,12 @@
 //		a2asrv.WithCallInterceptors(a2atape.NewPersistenceInterceptor(store)),
 //	)
 //
-// taskstore.TaskVersion is persisted in each profile-v1 task record and is
-// independent from Tape's arbitrary-precision sequence. Profile v1 was
-// intentionally redefined by this breaking migration; older records without a
-// persisted version are rejected. Recovery uses a per-owner projection that is
-// rebuilt from Tape on first access and then advanced by incrementally replaying
-// new records.
+// taskstore.TaskVersion is derived per Task from profile-v1 record order and is
+// independent from Tape's arbitrary-precision sequence. Create projects version
+// 1 and every later Task record projects the successor while PrevVersion retains
+// optimistic-concurrency validation. Recovery uses a per-owner projection that
+// is rebuilt from Tape on first access and then advanced by incrementally
+// replaying new records.
 // Corrupt, inconsistent, or unknown-version records fail closed with their Tape
 // sequence and record ID.
 //

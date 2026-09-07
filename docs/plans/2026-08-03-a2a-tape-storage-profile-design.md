@@ -137,9 +137,9 @@ becomes another source of truth.
 The store preserves the SDK's optimistic concurrency control. `Update` compares
 `PrevVersion` with the current stored version. A mismatch returns
 `taskstore.ErrConcurrentModification`; the official server stack decides whether
-to retry or cancel the execution. The breaking Seq migration redefines profile
-v1 to persist `TaskVersion` in the A2A record rather than deriving it from Tape
-Seq; older v1 records without a persisted version are rejected.
+to retry or cancel the execution. `TaskVersion` is projected per Task from its
+record order: Create is version 1 and every later record increments it. It is
+therefore independent from Tape Seq without adding a persisted Version field.
 
 The following rules are mandatory:
 

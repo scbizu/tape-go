@@ -35,7 +35,6 @@ type tapeRecord struct {
 	Message        *a2a.Message          `json:"message,omitempty"`
 	Event          *a2a.StreamResponse   `json:"event,omitempty" validate:"required"`
 	PrevVersion    taskstore.TaskVersion `json:"prevVersion,omitempty" validate:"gte=0"`
-	Version        taskstore.TaskVersion `json:"version,omitempty" validate:"gte=0"`
 }
 
 type taskRecordInput struct {
@@ -208,9 +207,6 @@ func (r *tapeRecord) validate(e entry.CustomEntry) error {
 	}
 	if r.Task == nil {
 		return errors.New("a2a tape: task record is incomplete")
-	}
-	if r.Version == taskstore.TaskVersionMissing {
-		return errors.New("a2a tape: task record version is missing")
 	}
 	if r.TaskID != r.Task.ID || r.ContextID != r.Task.ContextID {
 		return errors.New("a2a tape: searchable identity does not match task")

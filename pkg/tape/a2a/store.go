@@ -83,7 +83,6 @@ func (s *Store) Create(ctx context.Context, task *a2a.Task) (taskstore.TaskVersi
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
 	}
-	record.Version = 1
 	return s.append(ownerCtx, ownerState, record)
 }
 
@@ -141,11 +140,9 @@ func (s *Store) Update(ctx context.Context, update *taskstore.UpdateRequest) (ta
 	if update.PrevVersion != taskstore.TaskVersionMissing && update.PrevVersion != stored.Version {
 		return taskstore.TaskVersionMissing, taskstore.ErrConcurrentModification
 	}
-	nextVersion, err := nextTaskVersion(stored.Version)
-	if err != nil {
+	if _, err := nextTaskVersion(stored.Version); err != nil {
 		return taskstore.TaskVersionMissing, err
 	}
-	record.Version = nextVersion
 	return s.append(ownerCtx, ownerState, record)
 }
 
@@ -246,7 +243,6 @@ func (s *Store) syncProjection(ctx context.Context, cached *ownerProjection) (*p
 
 	type decodedRecord struct {
 		record  *tapeRecord
-		version taskstore.TaskVersion
 		updated time.Time
 	}
 	decoded := make([]decodedRecord, 0, len(entries.Raw))
@@ -260,12 +256,11 @@ func (s *Store) syncProjection(ctx context.Context, cached *ownerProjection) (*p
 		}
 		decoded = append(decoded, decodedRecord{
 			record:  record,
-			version: record.Version,
 			updated: tapeEntry.GetTimestamp(),
 		})
 	}
 	for _, item := range decoded {
-		if err := applyRecord(state, item.record, item.version, item.updated); err != nil {
+		if err := applyRecord(state, item.record, item.updated); err != nil {
 			return nil, fmt.Errorf("a2a tape: replay record %s: %w", item.record.RecordID, err)
 		}
 	}
@@ -299,26 +294,23 @@ func nextTaskVersion(current taskstore.TaskVersion) (taskstore.TaskVersion, erro
 	return current + 1, nil
 }
 
-func applyRecord(state *projection, record *tapeRecord, version taskstore.TaskVersion, updated time.Time) error {
+func applyRecord(state *projection, record *tapeRecord, updated time.Time) error {
+	version := taskstore.TaskVersionMissing
 	if record.Task != nil {
 		previous, exists := state.tasks[record.TaskID]
 		if !exists {
 			if record.PrevVersion != taskstore.TaskVersionMissing {
 				return errors.New("first task record has a previous version")
 			}
-			if version != 1 {
-				return fmt.Errorf("first task record version is %d, want 1", version)
-			}
+			version = 1
 		} else {
 			if record.PrevVersion != taskstore.TaskVersionMissing && record.PrevVersion != previous.Version {
 				return fmt.Errorf("previous version is %d, want %d", record.PrevVersion, previous.Version)
 			}
-			want, err := nextTaskVersion(previous.Version)
+			var err error
+			version, err = nextTaskVersion(previous.Version)
 			if err != nil {
 				return err
-			}
-			if version != want {
-				return fmt.Errorf("task version is %d, want %d", version, want)
 			}
 		}
 		state.tasks[record.TaskID] = &taskstore.StoredTask{Task: record.Task, Version: version}

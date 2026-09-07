@@ -253,32 +253,9 @@ func TestStoreTaskVersionIsIndependentFromTapeSequence(t *testing.T) {
 			if err != nil || tapeView.Scope.SeqE != entry.SeqFromUint64(3) {
 				t.Fatalf("Tape head = %s, %v; want 3", tapeView.Scope.SeqE, err)
 			}
-		})
-	}
-}
-
-func TestStoreRejectsProfileV1RecordWithoutPersistedVersion(t *testing.T) {
-	for _, factory := range backendFactories(t) {
-		t.Run(factory.name, func(t *testing.T) {
-			backend := factory.open(t)
-			defer closeBackend(t, backend)
-			ownerCtx := owner.WithOwnerId(context.Background(), "owner-a")
-			if err := backend.Init(ownerCtx); err != nil {
-				t.Fatal(err)
-			}
-			task := testTask("old-v1-task", "context-1", a2a.TaskStateSubmitted)
-			record, err := newTaskRecord("owner-a", task, task, taskstore.TaskVersionMissing)
-			if err != nil {
-				t.Fatal(err)
-			}
-			record.Version = taskstore.TaskVersionMissing
-			if err := backend.Store(ownerCtx, record.entry()); err != nil {
-				t.Fatal(err)
-			}
-
-			_, err = newTestStore(t, backend).Get(authenticatedAs("owner-a"), task.ID)
-			if err == nil || !strings.Contains(err.Error(), "version is missing") {
-				t.Fatalf("Get() error = %v, want missing persisted version", err)
+			recovered, err := newTestStore(t, backend).Get(ctx, desired.ID)
+			if err != nil || recovered.Version != 2 {
+				t.Fatalf("recovered version = %d, %v; want 2", recovered.Version, err)
 			}
 		})
 	}
@@ -470,33 +447,6 @@ func TestStoreReplayFailsClosedOnCorruptRecord(t *testing.T) {
 			_, err := newTestStore(t, backend).Get(authenticatedAs("owner-a"), "task-1")
 			if err == nil || !strings.Contains(err.Error(), "seq 1") || !strings.Contains(err.Error(), "corrupt-1") {
 				t.Fatalf("Get() error = %v, want seq and record identity", err)
-			}
-		})
-	}
-}
-
-func TestStoreReplayFailsClosedOnInvalidPersistedTaskVersion(t *testing.T) {
-	for _, factory := range backendFactories(t) {
-		t.Run(factory.name, func(t *testing.T) {
-			backend := factory.open(t)
-			defer closeBackend(t, backend)
-			ownerCtx := owner.WithOwnerId(context.Background(), "owner-a")
-			if err := backend.Init(ownerCtx); err != nil {
-				t.Fatal(err)
-			}
-			task := testTask("task-1", "context-1", a2a.TaskStateSubmitted)
-			record, err := newTaskRecord("owner-a", task, task, taskstore.TaskVersionMissing)
-			if err != nil {
-				t.Fatal(err)
-			}
-			record.Version = 2
-			if err := backend.Store(ownerCtx, record.entry()); err != nil {
-				t.Fatal(err)
-			}
-
-			_, err = newTestStore(t, backend).Get(authenticatedAs("owner-a"), task.ID)
-			if err == nil || !strings.Contains(err.Error(), "want 1") {
-				t.Fatalf("Get() error = %v, want invalid task version", err)
 			}
 		})
 	}

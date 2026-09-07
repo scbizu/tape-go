@@ -19,7 +19,7 @@ func TestSeqIsComparableAndUnbounded(t *testing.T) {
 	}
 }
 
-func TestSeqJSONUsesStringsAndReadsLegacyUint64(t *testing.T) {
+func TestSeqJSONUsesDecimalStringsOnly(t *testing.T) {
 	huge := MustParseSeq("9007199254740993")
 	data, err := json.Marshal(huge)
 	if err != nil {
@@ -29,16 +29,18 @@ func TestSeqJSONUsesStringsAndReadsLegacyUint64(t *testing.T) {
 		t.Fatalf("MarshalJSON() = %s", data)
 	}
 
-	for _, data := range []string{`0`, `18446744073709551615`, `"18446744073709551616"`} {
+	for _, data := range []string{`"0"`, `"18446744073709551616"`} {
 		var got Seq
 		if err := json.Unmarshal([]byte(data), &got); err != nil {
 			t.Fatalf("UnmarshalJSON(%s): %v", data, err)
 		}
 	}
 
-	var got Seq
-	if err := json.Unmarshal([]byte(`18446744073709551616`), &got); !errors.Is(err, ErrInvalidSeq) {
-		t.Fatalf("oversized legacy number error = %v, want ErrInvalidSeq", err)
+	for _, data := range []string{`0`, `1`, `18446744073709551615`, `null`} {
+		var got Seq
+		if err := json.Unmarshal([]byte(data), &got); !errors.Is(err, ErrInvalidSeq) {
+			t.Errorf("UnmarshalJSON(%s) error = %v, want ErrInvalidSeq", data, err)
+		}
 	}
 	if value, ok := SeqFromUint64(math.MaxUint64).Uint64(); !ok || value != math.MaxUint64 {
 		t.Fatalf("Uint64() = %d, %v", value, ok)

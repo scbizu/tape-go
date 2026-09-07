@@ -42,7 +42,7 @@ func TestBuildJSONLIndex(t *testing.T) {
 
 	dir := t.TempDir()
 	file := filepath.Join(dir, "entries.jsonl")
-	content := []byte("{\"Seq\":7}\n{\"Seq\":9}\n{\"Seq\":13}\n")
+	content := []byte("{\"Seq\":\"7\"}\n{\"Seq\":\"9\"}\n{\"Seq\":\"13\"}\n")
 	if err := os.WriteFile(file, content, 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}

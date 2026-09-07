@@ -1,7 +1,6 @@
 package entry
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,7 +19,7 @@ type Seq struct {
 	decimal string
 }
 
-// SeqFromUint64 converts a legacy-width value to Seq.
+// SeqFromUint64 converts a uint64 value to Seq.
 func SeqFromUint64(value uint64) Seq {
 	if value == 0 {
 		return Seq{}
@@ -107,20 +106,8 @@ func (s *Seq) UnmarshalJSON(data []byte) error {
 		return errors.New("entry: unmarshal sequence into nil receiver")
 	}
 	var value string
-	if len(data) > 0 && data[0] == '"' {
-		if err := json.Unmarshal(data, &value); err != nil {
-			return fmt.Errorf("%w: %v", ErrInvalidSeq, err)
-		}
-	} else {
-		// Bare JSON numbers are accepted only for legacy uint64 data. New data is
-		// always emitted as a string so JavaScript consumers cannot lose precision.
-		if len(data) == 0 || !bytes.Equal(bytes.TrimSpace(data), data) {
-			return fmt.Errorf("%w: malformed JSON number", ErrInvalidSeq)
-		}
-		if _, err := strconv.ParseUint(string(data), 10, 64); err != nil {
-			return fmt.Errorf("%w: legacy number %q: %v", ErrInvalidSeq, data, err)
-		}
-		value = string(data)
+	if err := json.Unmarshal(data, &value); err != nil {
+		return fmt.Errorf("%w: expected decimal string: %v", ErrInvalidSeq, err)
 	}
 	seq, err := ParseSeq(value)
 	if err != nil {
