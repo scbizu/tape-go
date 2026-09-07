@@ -2,7 +2,6 @@ package entry
 
 import (
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -24,9 +23,9 @@ func (k EntryKind) IsAnchor() bool {
 // EntryLike is the duck-type interface for entries
 type EntryLike interface {
 	// The range-able or hash-able ID of the entry
-	GetID() uint64
+	GetID() Seq
 	// WithID returns the entry with the given ID.
-	WithID(uint64) EntryLike
+	WithID(Seq) EntryLike
 	// The kind of the entry
 	GetKind() EntryKind
 	// Entry should have the ability to summarize itself
@@ -75,7 +74,7 @@ func WithEntryOwner(owner string) EntryOption {
 	}
 }
 
-func WithEntryID(id uint64) EntryOption {
+func WithEntryID(id Seq) EntryOption {
 	return func(e *Entry) {
 		e.Seq = id
 	}
@@ -87,23 +86,25 @@ func WithEntryTimestamp(timestamp time.Time) EntryOption {
 	}
 }
 
-func NextEntryID(old uint64) uint64 {
-	return atomic.AddUint64(&old, +1)
+// NextEntryID returns old.Next.
+// Deprecated: use Seq.Next directly.
+func NextEntryID(old Seq) Seq {
+	return old.Next()
 }
 
 type Entry struct {
-	Seq       uint64
+	Seq       Seq
 	Ek        EntryKind
 	Text      string
 	Owner     string
 	Timestamp time.Time
 }
 
-func (e Entry) GetID() uint64 {
+func (e Entry) GetID() Seq {
 	return e.Seq
 }
 
-func (e Entry) WithID(id uint64) EntryLike {
+func (e Entry) WithID(id Seq) EntryLike {
 	e.Seq = id
 	return e
 }
@@ -135,7 +136,7 @@ type CustomEntry struct {
 	Extensions map[string]any
 }
 
-func (e CustomEntry) WithID(id uint64) EntryLike {
+func (e CustomEntry) WithID(id Seq) EntryLike {
 	e.Seq = id
 	return e
 }

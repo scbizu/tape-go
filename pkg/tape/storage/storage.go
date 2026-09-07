@@ -25,7 +25,7 @@ type TapeStorage interface {
 	// TODO: Mask marks the time-period from a tape as low-priority
 	// 往事不堪回首 , 也许我们需要一个机制来定义某些记忆是我们不想记起来的
 	// Be fair to agents
-	// Mask(context.Context, SessionID, uint64) (TapeView, error)
+	// Mask(context.Context, SessionID, entry.Seq) (TapeView, error)
 	//
 	// TapeStorage should also hold the storage of entries
 	EntryStorage
@@ -47,7 +47,7 @@ func WithRangeAfter(after time.Time) RangeBy {
 
 type RewindOption struct {
 	// fromSeq introduces rewind from e index
-	FromSeq uint64
+	FromSeq entry.Seq
 	// maxAnchors represents max anchors to rewind
 	// by default, Rewind only rewinds to latest anchor
 	MaxAnchors uint8
@@ -55,7 +55,7 @@ type RewindOption struct {
 
 type RewindBy func(*RewindOption)
 
-func WithRewindFromSeq(seq uint64) RewindBy {
+func WithRewindFromSeq(seq entry.Seq) RewindBy {
 	return func(ro *RewindOption) {
 		ro.FromSeq = seq
 	}

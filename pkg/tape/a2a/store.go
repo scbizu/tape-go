@@ -34,7 +34,7 @@ type Store struct {
 type ownerProjection struct {
 	mu             sync.Mutex
 	projection     *projection
-	lastAppliedSeq uint64
+	lastAppliedSeq entry.Seq
 	loaded         bool
 }
 
@@ -43,6 +43,8 @@ type projection struct {
 	recordIDs map[string]taskstore.TaskVersion
 	updatedAt map[a2a.TaskID]time.Time
 }
+
+const maxTaskVersion = taskstore.TaskVersion(1<<63 - 1)
 
 func NewStore(config Config) (*Store, error) {
 	if err := validateStructure("config", config); err != nil {
@@ -81,6 +83,7 @@ func (s *Store) Create(ctx context.Context, task *a2a.Task) (taskstore.TaskVersi
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
 	}
+	record.Version = 1
 	return s.append(ownerCtx, ownerState, record)
 }
 
@@ -138,6 +141,11 @@ func (s *Store) Update(ctx context.Context, update *taskstore.UpdateRequest) (ta
 	if update.PrevVersion != taskstore.TaskVersionMissing && update.PrevVersion != stored.Version {
 		return taskstore.TaskVersionMissing, taskstore.ErrConcurrentModification
 	}
+	nextVersion, err := nextTaskVersion(stored.Version)
+	if err != nil {
+		return taskstore.TaskVersionMissing, err
+	}
+	record.Version = nextVersion
 	return s.append(ownerCtx, ownerState, record)
 }
 
@@ -205,30 +213,30 @@ func (s *Store) syncProjection(ctx context.Context, cached *ownerProjection) (*p
 		return nil, fmt.Errorf("a2a tape: get tape: %w", err)
 	}
 	head := tape.Scope.SeqE
-	if cached.loaded && head < cached.lastAppliedSeq {
+	if cached.loaded && head.Cmp(cached.lastAppliedSeq) < 0 {
 		lastApplied := cached.lastAppliedSeq
 		cached.projection = nil
-		cached.lastAppliedSeq = 0
+		cached.lastAppliedSeq = entry.Seq{}
 		cached.loaded = false
-		return nil, fmt.Errorf("a2a tape: head regressed from seq %d to %d", lastApplied, head)
+		return nil, fmt.Errorf("a2a tape: head regressed from seq %s to %s", lastApplied, head)
 	}
 	if cached.loaded && head == cached.lastAppliedSeq {
 		return cached.projection, nil
 	}
 
-	start := uint64(1)
+	start := entry.SeqFromUint64(1)
 	state := newProjection()
 	if cached.loaded {
-		start = cached.lastAppliedSeq + 1
-		state = cached.projection
+		start = cached.lastAppliedSeq.Next()
+		state = cloneProjection(cached.projection)
 	}
-	if head == 0 {
+	if head.IsZero() {
 		cached.projection = state
-		cached.lastAppliedSeq = 0
+		cached.lastAppliedSeq = entry.Seq{}
 		cached.loaded = true
 		return state, nil
 	}
-	entries, err := s.storage.Range(ctx, view.EntryRange{SeqS: start, SeqE: head + 1})
+	entries, err := s.storage.Range(ctx, view.EntryRange{SeqS: start, SeqE: head.Next()})
 	if err != nil {
 		return nil, fmt.Errorf("a2a tape: range tape: %w", err)
 	}
@@ -248,16 +256,22 @@ func (s *Store) syncProjection(ctx context.Context, cached *ownerProjection) (*p
 		}
 		record, err := recordFromEntry(tapeEntry)
 		if err != nil {
-			return nil, fmt.Errorf("a2a tape: replay seq %d record %s: %w", tapeEntry.GetID(), recordIdentityFromEntry(tapeEntry), err)
+			return nil, fmt.Errorf("a2a tape: replay seq %s record %s: %w", tapeEntry.GetID(), recordIdentityFromEntry(tapeEntry), err)
+		}
+		version, err := taskVersionForRecord(record, tapeEntry.GetID())
+		if err != nil {
+			return nil, fmt.Errorf("a2a tape: replay seq %s record %s: %w", tapeEntry.GetID(), record.RecordID, err)
 		}
 		decoded = append(decoded, decodedRecord{
 			record:  record,
-			version: taskstore.TaskVersion(tapeEntry.GetID()),
+			version: version,
 			updated: tapeEntry.GetTimestamp(),
 		})
 	}
 	for _, item := range decoded {
-		applyRecord(state, item.record, item.version, item.updated)
+		if err := applyRecord(state, item.record, item.version, item.updated); err != nil {
+			return nil, fmt.Errorf("a2a tape: replay record %s: %w", item.record.RecordID, err)
+		}
 	}
 	cached.projection = state
 	cached.lastAppliedSeq = head
@@ -265,31 +279,86 @@ func (s *Store) syncProjection(ctx context.Context, cached *ownerProjection) (*p
 	return state, nil
 }
 
-func validateReplayRange(entries []entry.EntryLike, start, head uint64) error {
+func validateReplayRange(entries []entry.EntryLike, start, head entry.Seq) error {
 	if len(entries) == 0 {
-		return fmt.Errorf("a2a tape: replay range [%d,%d] returned no entries", start, head)
+		return fmt.Errorf("a2a tape: replay range [%s,%s] returned no entries", start, head)
 	}
 	expected := start
 	for _, tapeEntry := range entries {
 		if tapeEntry.GetID() != expected {
-			return fmt.Errorf("a2a tape: replay expected seq %d, got %d", expected, tapeEntry.GetID())
+			return fmt.Errorf("a2a tape: replay expected seq %s, got %s", expected, tapeEntry.GetID())
 		}
-		expected++
+		expected = expected.Next()
 	}
-	if expected-1 != head {
-		return fmt.Errorf("a2a tape: replay ended at seq %d, want %d", expected-1, head)
+	if expected != head.Next() {
+		return fmt.Errorf("a2a tape: replay ended before seq %s", head)
 	}
 	return nil
 }
 
-func applyRecord(state *projection, record *tapeRecord, version taskstore.TaskVersion, updated time.Time) {
-	if _, exists := state.recordIDs[record.RecordID]; !exists {
-		state.recordIDs[record.RecordID] = version
+func taskVersionForRecord(record *tapeRecord, seq entry.Seq) (taskstore.TaskVersion, error) {
+	if record.ProfileVersion == profileVersion {
+		return record.Version, nil
 	}
+	legacy, ok := seq.Uint64()
+	if !ok || legacy > uint64(maxTaskVersion) {
+		return taskstore.TaskVersionMissing, errors.New("legacy Tape sequence does not fit TaskVersion")
+	}
+	return taskstore.TaskVersion(legacy), nil
+}
+
+func nextTaskVersion(current taskstore.TaskVersion) (taskstore.TaskVersion, error) {
+	if current == maxTaskVersion {
+		return taskstore.TaskVersionMissing, errors.New("a2a tape: task version exhausted")
+	}
+	return current + 1, nil
+}
+
+func applyRecord(state *projection, record *tapeRecord, version taskstore.TaskVersion, updated time.Time) error {
 	if record.Task != nil {
+		previous, exists := state.tasks[record.TaskID]
+		if !exists {
+			if record.PrevVersion != taskstore.TaskVersionMissing {
+				return errors.New("first task record has a previous version")
+			}
+			if record.ProfileVersion == profileVersion && version != 1 {
+				return fmt.Errorf("first task record version is %d, want 1", version)
+			}
+		} else {
+			if record.PrevVersion != taskstore.TaskVersionMissing && record.PrevVersion != previous.Version {
+				return fmt.Errorf("previous version is %d, want %d", record.PrevVersion, previous.Version)
+			}
+			if record.ProfileVersion == profileVersion {
+				want, err := nextTaskVersion(previous.Version)
+				if err != nil {
+					return err
+				}
+				if version != want {
+					return fmt.Errorf("task version is %d, want %d", version, want)
+				}
+			}
+		}
 		state.tasks[record.TaskID] = &taskstore.StoredTask{Task: record.Task, Version: version}
 		state.updatedAt[record.TaskID] = updated
 	}
+	if _, exists := state.recordIDs[record.RecordID]; !exists {
+		state.recordIDs[record.RecordID] = version
+	}
+	return nil
+}
+
+func cloneProjection(source *projection) *projection {
+	cloned := newProjection()
+	for id, task := range source.tasks {
+		cloned.tasks[id] = task
+	}
+	for id, version := range source.recordIDs {
+		cloned.recordIDs[id] = version
+	}
+	for id, updated := range source.updatedAt {
+		cloned.updatedAt[id] = updated
+	}
+	return cloned
 }
 
 func recordIdentityFromEntry(e entry.EntryLike) string {

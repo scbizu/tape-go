@@ -8,7 +8,6 @@ import (
 	"iter"
 	"maps"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -263,16 +262,16 @@ func (a *TapeAdapter) loadSession(ctx context.Context, recent int, after time.Ti
 }
 
 func (a *TapeAdapter) activeEntries(ctx context.Context, tapeView view.TapeView, after time.Time) ([]entry.EntryLike, error) {
-	if tapeView.Scope.SeqE == 0 {
+	if tapeView.Scope.SeqE.IsZero() {
 		return nil, nil
 	}
 	start := a.Tape.View.SeqS
-	if start == 0 {
-		start = 1
+	if start.IsZero() {
+		start = entry.SeqFromUint64(1)
 	}
 	entries, err := a.Tape.Range(a.tapeContext(ctx), view.EntryRange{
 		SeqS: start,
-		SeqE: entry.NextEntryID(tapeView.Scope.SeqE),
+		SeqE: tapeView.Scope.SeqE.Next(),
 	}, storage.WithRangeAfter(after))
 	if err != nil {
 		return nil, err
@@ -402,7 +401,7 @@ func eventFromEntry(tapeEntry entry.EntryLike) (*session.Event, error) {
 	if raw, ok := eventExtension(tapeEntry); ok {
 		var event session.Event
 		if err := json.Unmarshal([]byte(raw), &event); err != nil {
-			return nil, fmt.Errorf("agent: decode ADK event from entry %d: %w", tapeEntry.GetID(), err)
+			return nil, fmt.Errorf("agent: decode ADK event from entry %s: %w", tapeEntry.GetID(), err)
 		}
 		return &event, nil
 	}
@@ -414,7 +413,7 @@ func eventFromEntry(tapeEntry entry.EntryLike) (*session.Event, error) {
 		author = owner.SystemUser
 	}
 	return &session.Event{
-		ID:        strconv.FormatUint(tapeEntry.GetID(), 10),
+		ID:        tapeEntry.GetID().String(),
 		Author:    author,
 		Timestamp: tapeEntry.GetTimestamp(),
 		LLMResponse: model.LLMResponse{Content: &genai.Content{

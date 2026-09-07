@@ -30,6 +30,7 @@ func TestRecordRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newTaskRecord() error = %v", err)
 	}
+	record.Version = 2
 	got, err := recordFromEntry(record.entry())
 	if err != nil {
 		t.Fatalf("recordFromEntry() error = %v", err)
@@ -37,6 +38,9 @@ func TestRecordRoundTrip(t *testing.T) {
 
 	if got.ProfileVersion != profileVersion {
 		t.Fatalf("ProfileVersion = %d, want %d", got.ProfileVersion, profileVersion)
+	}
+	if got.Version != 2 {
+		t.Fatalf("Version = %d, want 2", got.Version)
 	}
 	if got.A2AVersion != string(a2a.Version) {
 		t.Fatalf("A2AVersion = %q, want %q", got.A2AVersion, a2a.Version)

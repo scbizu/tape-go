@@ -52,8 +52,8 @@ func TestTapeWriteAndReadEntriesThroughSystemIO(t *testing.T) {
 		t.Fatalf("entries len mismatch: want %d, got %d from %s", len(wantText), len(got), data)
 	}
 	for i, want := range wantText {
-		if got[i].Seq != uint64(i+1) {
-			t.Fatalf("entry %d seq mismatch: want %d, got %d", i, i+1, got[i].Seq)
+		if got[i].Seq != entry.SeqFromUint64(uint64(i+1)) {
+			t.Fatalf("entry %d seq mismatch: want %d, got %s", i, i+1, got[i].Seq)
 		}
 		if got[i].Owner != "owner-a" {
 			t.Fatalf("entry %d owner mismatch: want %q, got %q", i, "owner-a", got[i].Owner)

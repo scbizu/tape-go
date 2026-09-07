@@ -41,7 +41,7 @@ type observedStorage struct {
 
 	mu         sync.Mutex
 	ranges     []view.EntryRange
-	forcedHead *uint64
+	forcedHead *entry.Seq
 	blockOwner string
 	entered    chan struct{}
 	release    chan struct{}
@@ -220,6 +220,76 @@ func TestStoreRecovery(t *testing.T) {
 	}
 }
 
+func TestStoreTaskVersionIsIndependentFromTapeSequence(t *testing.T) {
+	for _, factory := range backendFactories(t) {
+		t.Run(factory.name, func(t *testing.T) {
+			backend := factory.open(t)
+			defer closeBackend(t, backend)
+			ownerCtx := owner.WithOwnerId(context.Background(), "owner-a")
+			if err := backend.Init(ownerCtx); err != nil {
+				t.Fatal(err)
+			}
+			if err := backend.Store(ownerCtx, entry.NewEntry(entry.WithEntryOwner("owner-a"))); err != nil {
+				t.Fatal(err)
+			}
+
+			store := newTestStore(t, backend)
+			ctx := authenticatedAs("owner-a")
+			previous := testTask("task-1", "context-1", a2a.TaskStateSubmitted)
+			version, err := store.Create(ctx, previous)
+			if err != nil || version != 1 {
+				t.Fatalf("Create() version = %d, %v; want 1", version, err)
+			}
+			desired := testTask("task-1", "context-1", a2a.TaskStateWorking)
+			event := a2a.NewStatusUpdateEvent(desired, a2a.TaskStateWorking, nil)
+			event.Status.Timestamp = desired.Status.Timestamp
+			version, err = store.Update(ctx, &taskstore.UpdateRequest{
+				Task: desired, Event: event, PrevTask: previous, PrevVersion: version,
+			})
+			if err != nil || version != 2 {
+				t.Fatalf("Update() version = %d, %v; want 2", version, err)
+			}
+			tapeView, err := backend.Get(ownerCtx)
+			if err != nil || tapeView.Scope.SeqE != entry.SeqFromUint64(3) {
+				t.Fatalf("Tape head = %s, %v; want 3", tapeView.Scope.SeqE, err)
+			}
+		})
+	}
+}
+
+func TestStoreReplaysLegacyProfileVersionFromCheckedSequence(t *testing.T) {
+	for _, factory := range backendFactories(t) {
+		t.Run(factory.name, func(t *testing.T) {
+			backend := factory.open(t)
+			defer closeBackend(t, backend)
+			ownerCtx := owner.WithOwnerId(context.Background(), "owner-a")
+			if err := backend.Init(ownerCtx); err != nil {
+				t.Fatal(err)
+			}
+			for range 6 {
+				if err := backend.Store(ownerCtx, entry.NewEntry(entry.WithEntryOwner("owner-a"))); err != nil {
+					t.Fatal(err)
+				}
+			}
+			task := testTask("legacy-task", "context-1", a2a.TaskStateSubmitted)
+			record, err := newTaskRecord("owner-a", task, task, taskstore.TaskVersionMissing)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record.ProfileVersion = legacyProfileVersion
+			record.Version = taskstore.TaskVersionMissing
+			if err := backend.Store(ownerCtx, record.entry()); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := newTestStore(t, backend).Get(authenticatedAs("owner-a"), task.ID)
+			if err != nil || got.Version != 7 {
+				t.Fatalf("legacy Get() = %#v, %v; want version 7", got, err)
+			}
+		})
+	}
+}
+
 func TestStoreOwnerIsolation(t *testing.T) {
 	for _, factory := range backendFactories(t) {
 		t.Run(factory.name, func(t *testing.T) {
@@ -322,8 +392,8 @@ func TestStoreUpdateRetryHasNoSecondEffect(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tape.Scope.SeqE != uint64(first) {
-				t.Fatalf("last seq = %d, want %d; retry appended another record", tape.Scope.SeqE, first)
+			if tape.Scope.SeqE != entry.SeqFromUint64(2) {
+				t.Fatalf("last seq = %s, want 2; retry appended another record", tape.Scope.SeqE)
 			}
 		})
 	}
@@ -362,7 +432,11 @@ func TestStoreUpdatePersistsTaskAndEventAtomically(t *testing.T) {
 				t.Fatalf("recovered task = %#v, want %#v at %d", got, desired, updatedVersion)
 			}
 			ownerCtx := owner.WithOwnerId(context.Background(), "owner-a")
-			entries, err := secondBackend.Range(ownerCtx, view.EntryRange{SeqS: uint64(updatedVersion), SeqE: uint64(updatedVersion) + 1})
+			tapeView, err := secondBackend.Get(ownerCtx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entries, err := secondBackend.Range(ownerCtx, view.EntryRange{SeqS: tapeView.Scope.SeqE, SeqE: tapeView.Scope.SeqE.Next()})
 			if err != nil || len(entries.Raw) != 1 {
 				t.Fatalf("read update entry: len=%d err=%v", len(entries.Raw), err)
 			}
@@ -407,6 +481,33 @@ func TestStoreReplayFailsClosedOnCorruptRecord(t *testing.T) {
 	}
 }
 
+func TestStoreReplayFailsClosedOnInvalidPersistedTaskVersion(t *testing.T) {
+	for _, factory := range backendFactories(t) {
+		t.Run(factory.name, func(t *testing.T) {
+			backend := factory.open(t)
+			defer closeBackend(t, backend)
+			ownerCtx := owner.WithOwnerId(context.Background(), "owner-a")
+			if err := backend.Init(ownerCtx); err != nil {
+				t.Fatal(err)
+			}
+			task := testTask("task-1", "context-1", a2a.TaskStateSubmitted)
+			record, err := newTaskRecord("owner-a", task, task, taskstore.TaskVersionMissing)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record.Version = 2
+			if err := backend.Store(ownerCtx, record.entry()); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = newTestStore(t, backend).Get(authenticatedAs("owner-a"), task.ID)
+			if err == nil || !strings.Contains(err.Error(), "want 1") {
+				t.Fatalf("Get() error = %v, want invalid task version", err)
+			}
+		})
+	}
+}
+
 func TestStoreReplayReadsOnlyNewEntries(t *testing.T) {
 	for _, factory := range backendFactories(t) {
 		t.Run(factory.name, func(t *testing.T) {
@@ -436,7 +537,7 @@ func TestStoreReplayReadsOnlyNewEntries(t *testing.T) {
 			if _, err := store.Get(ctx, task2.ID); err != nil {
 				t.Fatal(err)
 			}
-			want := view.EntryRange{SeqS: 2, SeqE: 3}
+			want := view.EntryRange{SeqS: entry.SeqFromUint64(2), SeqE: entry.SeqFromUint64(3)}
 			if ranges := backend.observedRanges(); len(ranges) != 1 || ranges[0] != want {
 				t.Fatalf("incremental ranges = %+v, want [%+v]", ranges, want)
 			}
@@ -510,7 +611,7 @@ func TestStoreReplayInvalidatesCacheWhenHeadRegresses(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			regressed := uint64(0)
+			regressed := entry.Seq{}
 			backend.mu.Lock()
 			backend.forcedHead = &regressed
 			backend.mu.Unlock()

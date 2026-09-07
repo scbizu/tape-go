@@ -55,14 +55,14 @@ func TestSemanticFindReturnsRangeMatch(t *testing.T) {
 	store.index.Items = append(store.index.Items, SemanticItem{
 		Summary:   "archive",
 		Embedding: []float32{1, 0},
-		Scope:     view.EntryRange{SeqS: 1, SeqE: 3},
+		Scope:     view.EntryRange{SeqS: testSeq(1), SeqE: testSeq(3)},
 	})
 
 	got, err := NewSemantic("archive", 1).Find(context.Background(), store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Scope != (view.EntryRange{SeqS: 1, SeqE: 3}) || len(got.Raw) != 2 {
+	if got.Scope != (view.EntryRange{SeqS: testSeq(1), SeqE: testSeq(3)}) || len(got.Raw) != 2 {
 		t.Fatalf("Find range mismatch: scope=%+v raw=%d", got.Scope, len(got.Raw))
 	}
 }
@@ -85,24 +85,25 @@ func TestSemanticFindReturnsRerankError(t *testing.T) {
 
 type semanticStore struct {
 	index   SemanticIndex
-	entries map[uint64]entry.EntryLike
+	entries map[entry.Seq]entry.EntryLike
 }
 
 func newSemanticStore(model *fakeModel) *semanticStore {
 	return &semanticStore{
 		index:   SemanticIndex{Model: model},
-		entries: make(map[uint64]entry.EntryLike),
+		entries: make(map[entry.Seq]entry.EntryLike),
 	}
 }
 
 func (s *semanticStore) add(id uint64, text string) {
-	e := entry.NewEntry(entry.WithEntryID(id), entry.WithEntryContent(text))
-	s.entries[id] = e
+	seq := entry.SeqFromUint64(id)
+	e := entry.NewEntry(entry.WithEntryID(seq), entry.WithEntryContent(text))
+	s.entries[seq] = e
 	embedding, _ := s.index.Model.Embedding(context.Background(), text)
 	s.index.Items = append(s.index.Items, SemanticItem{
 		Summary:   text,
 		Embedding: embedding,
-		Scope:     view.EntryRange{SeqS: id, SeqE: id + 1},
+		Scope:     view.EntryRange{SeqS: seq, SeqE: seq.Next()},
 	})
 }
 
@@ -112,12 +113,16 @@ func (s *semanticStore) Store(context.Context, entry.EntryLike) error {
 
 func (s *semanticStore) Range(_ context.Context, r view.EntryRange, _ ...storage.RangeBy) (view.EntryView, error) {
 	out := view.EntryView{SessionId: "session-a", Owner: "owner-a", Scope: r}
-	for seq := r.SeqS; seq < r.SeqE; seq++ {
+	for seq := r.SeqS; seq.Cmp(r.SeqE) < 0; seq = seq.Next() {
 		if e, ok := s.entries[seq]; ok {
 			out.Raw = append(out.Raw, e)
 		}
 	}
 	return out, nil
+}
+
+func testSeq(value uint64) entry.Seq {
+	return entry.SeqFromUint64(value)
 }
 
 func (s *semanticStore) SemanticIndex(context.Context) (SemanticIndex, error) {

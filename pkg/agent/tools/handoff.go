@@ -19,8 +19,8 @@ import (
 // HandoffArgs configures the handoff command's anchor payload and range.
 type HandoffArgs struct {
 	Summary string `json:"summary,omitempty" jsonschema:"Summary for the archived context window."`
-	SeqS    uint64 `json:"seq_s,omitempty" jsonschema:"First archived entry sequence; zero uses the current tape view."`
-	SeqE    uint64 `json:"seq_e,omitempty" jsonschema:"Exclusive archived entry sequence; zero uses the next anchor sequence."`
+	SeqS    string `json:"seq_s,omitempty" jsonschema:"First archived entry sequence as a decimal string; empty or zero uses the current tape view."`
+	SeqE    string `json:"seq_e,omitempty" jsonschema:"Exclusive archived entry sequence as a decimal string; empty or zero uses the next anchor sequence."`
 }
 
 type handoffCommand struct {
@@ -52,28 +52,40 @@ func (c handoffCommand) Run(ctx context.Context, _ tapeagent.AgentIO, call tapea
 	if err != nil {
 		return tapeagent.CommandResult{}, fmt.Errorf("tape: %w", err)
 	}
-	if tv.Scope.SeqE == 0 {
+	if tv.Scope.SeqE.IsZero() {
 		return tapeagent.CommandResult{}, fmt.Errorf("tape: handoff empty tape")
 	}
 
-	anchorSeq := entry.NextEntryID(tv.Scope.SeqE)
+	anchorSeq := tv.Scope.SeqE.Next()
 	anchor := entry.HandoffAnchor{
 		Summary: args.Summary,
 		SeqS:    c.tape.View.SeqS,
 		SeqE:    anchorSeq,
 	}
-	if anchor.SeqS == 0 {
-		anchor.SeqS = 1
+	if anchor.SeqS.IsZero() {
+		anchor.SeqS = entry.SeqFromUint64(1)
 	}
-	if args.SeqS != 0 {
-		anchor.SeqS = args.SeqS
+	if args.SeqS != "" {
+		seq, err := entry.ParseSeq(args.SeqS)
+		if err != nil {
+			return tapeagent.CommandResult{}, fmt.Errorf("agent: handoff seq_s: %w", err)
+		}
+		if !seq.IsZero() {
+			anchor.SeqS = seq
+		}
 	}
-	if args.SeqE != 0 {
-		anchor.SeqE = args.SeqE
+	if args.SeqE != "" {
+		seq, err := entry.ParseSeq(args.SeqE)
+		if err != nil {
+			return tapeagent.CommandResult{}, fmt.Errorf("agent: handoff seq_e: %w", err)
+		}
+		if !seq.IsZero() {
+			anchor.SeqE = seq
+		}
 	}
-	if anchor.SeqS > anchor.SeqE {
+	if anchor.SeqS.Cmp(anchor.SeqE) > 0 {
 		return tapeagent.CommandResult{}, fmt.Errorf(
-			"tape: invalid handoff range [%d,%d)",
+			"tape: invalid handoff range [%s,%s)",
 			anchor.SeqS,
 			anchor.SeqE,
 		)
@@ -89,7 +101,7 @@ func (c handoffCommand) Run(ctx context.Context, _ tapeagent.AgentIO, call tapea
 	); err != nil {
 		return tapeagent.CommandResult{}, fmt.Errorf("tape: %w", err)
 	}
-	c.tape.SetView(view.EntryRange{SeqS: entry.NextEntryID(anchorSeq)})
+	c.tape.SetView(view.EntryRange{SeqS: anchorSeq.Next()})
 	return tapeagent.CommandResult{Data: anchor}, nil
 }
 

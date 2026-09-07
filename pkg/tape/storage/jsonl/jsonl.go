@@ -55,7 +55,7 @@ type JSONLIndex struct {
 type ownerJSONL struct {
 	sync.RWMutex
 	sessionId      string
-	lastEntryId    uint64
+	lastEntryId    entry.Seq
 	lastTimestamp  time.Time
 	indexes        []JSONLIndex
 	semanticModel  llm.Model
@@ -186,7 +186,7 @@ func (j *JSONL) Init(
 			state.semanticEnable = true
 		}
 		for _, index := range indexes {
-			state.lastEntryId = max(state.lastEntryId, index.Scope.SeqE)
+			state.lastEntryId = seqMax(state.lastEntryId, index.Scope.SeqE)
 			if index.lastTimestamp.After(state.lastTimestamp) {
 				state.lastTimestamp = index.lastTimestamp
 			}
@@ -238,8 +238,8 @@ func (j *JSONL) Store(
 	if len(state.indexes) == 0 {
 		return errors.New("jsonl: no index to store")
 	}
-	if e.GetID() == 0 {
-		e = e.WithID(entry.NextEntryID(state.lastEntryId))
+	if e.GetID().IsZero() {
+		e = e.WithID(state.lastEntryId.Next())
 	}
 	timestamp := e.GetTimestamp()
 	if timestamp.IsZero() {
@@ -334,9 +334,9 @@ func (j *JSONL) Range(
 			opt(&option)
 		}
 	}
-	if r.SeqS > r.SeqE {
+	if r.SeqS.Cmp(r.SeqE) > 0 {
 		return view.EntryView{}, fmt.Errorf(
-			"jsonl: invalid range [%d,%d)",
+			"jsonl: invalid range [%s,%s)",
 			r.SeqS,
 			r.SeqE,
 		)
@@ -359,8 +359,8 @@ func (j *JSONL) Range(
 
 	for _, index := range state.indexes {
 		if index.Entries == 0 ||
-			index.Scope.SeqE < r.SeqS ||
-			index.Scope.SeqS >= r.SeqE ||
+			index.Scope.SeqE.Cmp(r.SeqS) < 0 ||
+			index.Scope.SeqS.Cmp(r.SeqE) >= 0 ||
 			!option.After.IsZero() && index.lastTimestamp.Before(option.After) {
 			continue
 		}
@@ -384,9 +384,7 @@ func (j *JSONL) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.Entr
 		option.MaxAnchors = 1
 	}
 	seq := option.FromSeq
-	if seq == 0 {
-		seq = ^uint64(0)
-	}
+	latest := seq.IsZero()
 
 	_, state, err := j.ownerState(ctx, false)
 	if err != nil {
@@ -399,24 +397,24 @@ func (j *JSONL) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.Entr
 	found := uint8(0)
 	for i := len(state.indexes) - 1; i >= 0; i-- {
 		index := state.indexes[i]
-		if index.Entries == 0 || index.Scope.SeqS > seq {
+		if index.Entries == 0 || !latest && index.Scope.SeqS.Cmp(seq) > 0 {
 			continue
 		}
-		anchors, err := j.rewindIndex(ctx, index.Path, seq)
+		anchors, err := j.rewindIndex(ctx, index.Path, seq, latest)
 		if err != nil {
 			return view.EntryRange{}, fmt.Errorf("jsonl: rewind: %w", err)
 		}
 		for i := len(anchors) - 1; i >= 0 && found < option.MaxAnchors; i-- {
 			var anchor entry.HandoffAnchor
 			if err := json.Unmarshal([]byte(anchors[i].GetSummary()), &anchor); err != nil {
-				return view.EntryRange{}, fmt.Errorf("jsonl: rewind: decode anchor %d: %w", anchors[i].GetID(), err)
+				return view.EntryRange{}, fmt.Errorf("jsonl: rewind: decode anchor %s: %w", anchors[i].GetID(), err)
 			}
 			r := view.EntryRange{SeqS: anchor.SeqS, SeqE: anchor.SeqE}
 			if found == 0 {
 				result = r
 			} else {
-				result.SeqS = min(result.SeqS, r.SeqS)
-				result.SeqE = max(result.SeqE, r.SeqE)
+				result.SeqS = seqMin(result.SeqS, r.SeqS)
+				result.SeqE = seqMax(result.SeqE, r.SeqE)
 			}
 			found++
 		}
@@ -427,13 +425,14 @@ func (j *JSONL) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.Entr
 	if found > 0 {
 		return result, nil
 	}
-	return view.EntryRange{}, fmt.Errorf("jsonl: rewind: %w before seq %d", storage.ErrNoAnchor, option.FromSeq)
+	return view.EntryRange{}, fmt.Errorf("jsonl: rewind: %w before seq %s", storage.ErrNoAnchor, option.FromSeq)
 }
 
 func (j *JSONL) rewindIndex(
 	ctx context.Context,
 	path string,
-	seq uint64,
+	seq entry.Seq,
+	latest bool,
 ) ([]entry.EntryLike, error) {
 	fd, err := j.Open(path)
 	if err != nil {
@@ -455,7 +454,7 @@ func (j *JSONL) rewindIndex(
 			}
 			return nil, fmt.Errorf("decode %s: %w", path, err)
 		}
-		if e.GetID() <= seq && e.GetKind().IsAnchor() {
+		if (latest || e.GetID().Cmp(seq) <= 0) && e.GetKind().IsAnchor() {
 			anchors = append(anchors, e)
 		}
 	}
@@ -488,7 +487,7 @@ func (j *JSONL) readEntriesInRange(
 			}
 			return nil, fmt.Errorf("decode %s: %w", path, err)
 		}
-		if e.GetID() >= r.SeqS && e.GetID() < r.SeqE &&
+		if e.GetID().Cmp(r.SeqS) >= 0 && e.GetID().Cmp(r.SeqE) < 0 &&
 			(after.IsZero() || !e.GetTimestamp().Before(after)) {
 			entries = append(entries, e)
 		}
@@ -572,10 +571,10 @@ func semanticItem(ctx context.Context, model llm.Model, e entry.EntryLike) (find
 		return finder.SemanticItem{}, false
 	}
 	summary := e.GetSummary()
-	scope := view.EntryRange{SeqS: e.GetID(), SeqE: e.GetID() + 1}
+	scope := view.EntryRange{SeqS: e.GetID(), SeqE: e.GetID().Next()}
 	if e.GetKind().IsAnchor() {
 		var anchor entry.HandoffAnchor
-		if err := json.Unmarshal([]byte(summary), &anchor); err == nil && anchor.Summary != "" && anchor.SeqS <= anchor.SeqE {
+		if err := json.Unmarshal([]byte(summary), &anchor); err == nil && anchor.Summary != "" && anchor.SeqS.Cmp(anchor.SeqE) <= 0 {
 			summary = anchor.Summary
 			scope = view.EntryRange{SeqS: anchor.SeqS, SeqE: anchor.SeqE}
 		}
@@ -588,4 +587,18 @@ func semanticItem(ctx context.Context, model llm.Model, e entry.EntryLike) (find
 		return finder.SemanticItem{}, false
 	}
 	return finder.SemanticItem{Summary: summary, Embedding: embedding, Scope: scope}, true
+}
+
+func seqMin(a, b entry.Seq) entry.Seq {
+	if a.Cmp(b) < 0 {
+		return a
+	}
+	return b
+}
+
+func seqMax(a, b entry.Seq) entry.Seq {
+	if a.Cmp(b) > 0 {
+		return a
+	}
+	return b
 }

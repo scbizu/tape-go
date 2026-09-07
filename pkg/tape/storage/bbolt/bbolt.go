@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"path/filepath"
 	"time"
@@ -36,7 +37,7 @@ type Bbolt struct {
 }
 
 type metaState struct {
-	LastSeq       uint64
+	LastSeq       entry.Seq
 	LastTimestamp time.Time
 }
 
@@ -72,8 +73,10 @@ func (b *Bbolt) Init(ctx context.Context) error {
 				return fmt.Errorf("create bucket %s: %w", name, err)
 			}
 		}
-		_, err := sessionBucket(tx, metaBucket, ownerID, b.sessionID, true)
-		return err
+		if _, err := sessionBucket(tx, metaBucket, ownerID, b.sessionID, true); err != nil {
+			return err
+		}
+		return migrateSessionSeqKeys(tx, ownerID, b.sessionID)
 	})
 }
 
@@ -130,8 +133,8 @@ func (b *Bbolt) Store(ctx context.Context, e entry.EntryLike) error {
 		if err != nil {
 			return err
 		}
-		if e.GetID() == 0 {
-			e = e.WithID(state.LastSeq + 1)
+		if e.GetID().IsZero() {
+			e = e.WithID(state.LastSeq.Next())
 		}
 		timestamp := e.GetTimestamp()
 		if timestamp.IsZero() {
@@ -154,7 +157,7 @@ func (b *Bbolt) Store(ctx context.Context, e entry.EntryLike) error {
 				return fmt.Errorf("bbolt: store anchor: %w", err)
 			}
 		}
-		if e.GetID() > state.LastSeq {
+		if e.GetID().Cmp(state.LastSeq) > 0 {
 			state.LastSeq = e.GetID()
 		}
 		state.LastTimestamp = timestamp
@@ -169,8 +172,8 @@ func (b *Bbolt) Range(ctx context.Context, r view.EntryRange, opts ...storage.Ra
 			opt(&option)
 		}
 	}
-	if r.SeqS > r.SeqE {
-		return view.EntryView{}, fmt.Errorf("bbolt: invalid range [%d,%d)", r.SeqS, r.SeqE)
+	if r.SeqS.Cmp(r.SeqE) > 0 {
+		return view.EntryView{}, fmt.Errorf("bbolt: invalid range [%s,%s)", r.SeqS, r.SeqE)
 	}
 	ownerID, err := owner.GetOwnerId(ctx)
 	if err != nil {
@@ -218,9 +221,7 @@ func (b *Bbolt) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.Entr
 		option.MaxAnchors = 1
 	}
 	seq := option.FromSeq
-	if seq == 0 {
-		seq = ^uint64(0)
-	}
+	latest := seq.IsZero()
 	ownerID, err := owner.GetOwnerId(ctx)
 	if err != nil {
 		return view.EntryRange{}, err
@@ -237,12 +238,18 @@ func (b *Bbolt) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.Entr
 		}
 		c := anchors.Cursor()
 		k, v := c.Last()
-		if seq != ^uint64(0) {
+		if !latest {
 			k, v = c.Seek(seqKey(seq))
 			if k == nil {
 				k, v = c.Last()
-			} else if binary.BigEndian.Uint64(k) > seq {
-				k, v = c.Prev()
+			} else {
+				keySeq, err := decodeSeqKey(k)
+				if err != nil {
+					return err
+				}
+				if keySeq.Cmp(seq) > 0 {
+					k, v = c.Prev()
+				}
 			}
 		}
 		for ; k != nil && found < option.MaxAnchors; k, v = c.Prev() {
@@ -255,14 +262,14 @@ func (b *Bbolt) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.Entr
 			}
 			var anchor entry.HandoffAnchor
 			if err := json.Unmarshal([]byte(e.GetSummary()), &anchor); err != nil {
-				return fmt.Errorf("bbolt: rewind: decode anchor %d: %w", e.GetID(), err)
+				return fmt.Errorf("bbolt: rewind: decode anchor %s: %w", e.GetID(), err)
 			}
 			r := view.EntryRange{SeqS: anchor.SeqS, SeqE: anchor.SeqE}
 			if found == 0 {
 				result = r
 			} else {
-				result.SeqS = min(result.SeqS, r.SeqS)
-				result.SeqE = max(result.SeqE, r.SeqE)
+				result.SeqS = seqMin(result.SeqS, r.SeqS)
+				result.SeqE = seqMax(result.SeqE, r.SeqE)
 			}
 			found++
 		}
@@ -272,7 +279,7 @@ func (b *Bbolt) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.Entr
 		return view.EntryRange{}, err
 	}
 	if found == 0 {
-		return view.EntryRange{}, fmt.Errorf("bbolt: rewind: %w before seq %d", storage.ErrNoAnchor, option.FromSeq)
+		return view.EntryRange{}, fmt.Errorf("bbolt: rewind: %w before seq %s", storage.ErrNoAnchor, option.FromSeq)
 	}
 	return result, nil
 }
@@ -329,10 +336,92 @@ func sessionBucket(tx *bolt.Tx, top []byte, ownerID, sessionID string, create bo
 	return sessionBucket, nil
 }
 
-func seqKey(seq uint64) []byte {
-	var key [8]byte
-	binary.BigEndian.PutUint64(key[:], seq)
-	return key[:]
+func migrateSessionSeqKeys(tx *bolt.Tx, ownerID, sessionID string) error {
+	for _, top := range [][]byte{entriesBucket, anchorsBucket} {
+		bucket, err := sessionBucket(tx, top, ownerID, sessionID, false)
+		if err != nil || bucket == nil {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		type rewrite struct {
+			oldKey []byte
+			newKey []byte
+			value  []byte
+		}
+		var rewrites []rewrite
+		if err := bucket.ForEach(func(key, value []byte) error {
+			if value == nil || len(key) != 8 {
+				return nil
+			}
+			seq, err := decodeSeqKey(key)
+			if err != nil {
+				return err
+			}
+			rewrites = append(rewrites, rewrite{
+				oldKey: bytes.Clone(key),
+				newKey: seqKey(seq),
+				value:  bytes.Clone(value),
+			})
+			return nil
+		}); err != nil {
+			return fmt.Errorf("bbolt: inspect legacy %s keys: %w", top, err)
+		}
+		for _, item := range rewrites {
+			if existing := bucket.Get(item.newKey); existing != nil && !bytes.Equal(existing, item.value) {
+				return fmt.Errorf("bbolt: conflicting migrated %s sequence key", top)
+			}
+			if err := bucket.Put(item.newKey, item.value); err != nil {
+				return fmt.Errorf("bbolt: migrate %s sequence key: %w", top, err)
+			}
+			if err := bucket.Delete(item.oldKey); err != nil {
+				return fmt.Errorf("bbolt: remove legacy %s sequence key: %w", top, err)
+			}
+		}
+	}
+	meta, err := sessionBucket(tx, metaBucket, ownerID, sessionID, false)
+	if err != nil || meta == nil {
+		return err
+	}
+	state, err := decodeMeta(meta.Get(stateKey))
+	if err != nil {
+		return err
+	}
+	if meta.Get(stateKey) != nil {
+		return putMeta(meta, state)
+	}
+	return nil
+}
+
+var seqKeyPrefix = []byte{0xff, 's', 'e', 'q', 1}
+
+func seqKey(seq entry.Seq) []byte {
+	value, ok := new(big.Int).SetString(seq.String(), 10)
+	if !ok {
+		panic("bbolt: invalid trusted sequence")
+	}
+	magnitude := value.Bytes()
+	key := make([]byte, len(seqKeyPrefix)+4+len(magnitude))
+	copy(key, seqKeyPrefix)
+	binary.BigEndian.PutUint32(key[len(seqKeyPrefix):], uint32(len(magnitude)))
+	copy(key[len(seqKeyPrefix)+4:], magnitude)
+	return key
+}
+
+func decodeSeqKey(key []byte) (entry.Seq, error) {
+	if len(key) == 8 {
+		return entry.SeqFromUint64(binary.BigEndian.Uint64(key)), nil
+	}
+	if len(key) < len(seqKeyPrefix)+4 || !bytes.Equal(key[:len(seqKeyPrefix)], seqKeyPrefix) {
+		return entry.Seq{}, errors.New("bbolt: invalid sequence key")
+	}
+	length := int(binary.BigEndian.Uint32(key[len(seqKeyPrefix):]))
+	magnitude := key[len(seqKeyPrefix)+4:]
+	if length != len(magnitude) || length == 0 || magnitude[0] == 0 {
+		return entry.Seq{}, errors.New("bbolt: invalid sequence key magnitude")
+	}
+	return entry.ParseSeq(new(big.Int).SetBytes(magnitude).String())
 }
 
 func decodeEntry(data []byte) (entry.EntryLike, error) {
@@ -375,15 +464,15 @@ func putMeta(bucket *bolt.Bucket, state metaState) error {
 	return bucket.Put(stateKey, data)
 }
 
-func min(a, b uint64) uint64 {
-	if a < b {
+func seqMin(a, b entry.Seq) entry.Seq {
+	if a.Cmp(b) < 0 {
 		return a
 	}
 	return b
 }
 
-func max(a, b uint64) uint64 {
-	if a > b {
+func seqMax(a, b entry.Seq) entry.Seq {
+	if a.Cmp(b) > 0 {
 		return a
 	}
 	return b

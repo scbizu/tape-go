@@ -47,10 +47,10 @@ func (s Semantic) Find(ctx context.Context, tape storage.EntryStorage) (view.Ent
 	}
 	out := view.EntryView{}
 	for i, entryView := range views {
-		if i == 0 || entryView.Scope.SeqS < out.Scope.SeqS {
+		if i == 0 || entryView.Scope.SeqS.Cmp(out.Scope.SeqS) < 0 {
 			out.Scope.SeqS = entryView.Scope.SeqS
 		}
-		if entryView.Scope.SeqE > out.Scope.SeqE {
+		if entryView.Scope.SeqE.Cmp(out.Scope.SeqE) > 0 {
 			out.Scope.SeqE = entryView.Scope.SeqE
 		}
 		if out.SessionId == "" {

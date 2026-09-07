@@ -54,8 +54,8 @@ func TestBuildJSONLIndex(t *testing.T) {
 	if index.Path != file {
 		t.Fatalf("path mismatch: want %q, got %q", file, index.Path)
 	}
-	if index.Scope.SeqS != 7 || index.Scope.SeqE != 13 {
-		t.Fatalf("scope mismatch: want [7,13], got [%d,%d]", index.Scope.SeqS, index.Scope.SeqE)
+	if index.Scope.SeqS != seq(7) || index.Scope.SeqE != seq(13) {
+		t.Fatalf("scope mismatch: want [7,13], got [%s,%s]", index.Scope.SeqS, index.Scope.SeqE)
 	}
 	if index.Entries != 3 {
 		t.Fatalf("entries mismatch: want 3, got %d", index.Entries)
@@ -172,7 +172,7 @@ func TestJSONLRoundTripsCustomEntry(t *testing.T) {
 	if err := store.Store(ctx, want); err != nil {
 		t.Fatal(err)
 	}
-	view, err := store.Range(ctx, view.EntryRange{SeqS: 1, SeqE: 2})
+	view, err := store.Range(ctx, view.EntryRange{SeqS: seq(1), SeqE: seq(2)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestJSONLRoundTripsCustomEntry(t *testing.T) {
 	if !ok {
 		t.Fatalf("entry type mismatch: %T", view.Raw[0])
 	}
-	if got.GetID() != 1 || got.Extensions["event_id"] != "event-1" {
+	if got.GetID() != seq(1) || got.Extensions["event_id"] != "event-1" {
 		t.Fatalf("custom entry mismatch: %+v", got)
 	}
 	if !got.GetTimestamp().Equal(want.GetTimestamp()) {
@@ -254,9 +254,9 @@ func TestJSONLGetReturnsLastEntryID(t *testing.T) {
 	if err := store.Init(ctx); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	for _, id := range []uint64{7, 13} {
+	for _, id := range []entry.Seq{seq(7), seq(13)} {
 		if err := store.Store(ctx, entry.NewEntry(entry.WithEntryID(id))); err != nil {
-			t.Fatalf("Store entry %d: %v", id, err)
+			t.Fatalf("Store entry %s: %v", id, err)
 		}
 	}
 
@@ -264,16 +264,16 @@ func TestJSONLGetReturnsLastEntryID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Scope.SeqE != 13 {
-		t.Fatalf("scope end mismatch: want 13, got %d", got.Scope.SeqE)
+	if got.Scope.SeqE != seq(13) {
+		t.Fatalf("scope end mismatch: want 13, got %s", got.Scope.SeqE)
 	}
 	state := mustOwnerState(t, store, "owner-a")
 	if len(state.indexes) != 1 {
 		t.Fatalf("indexes len mismatch: want 1, got %d", len(state.indexes))
 	}
 	index := state.indexes[0]
-	if index.Scope.SeqS != 7 || index.Scope.SeqE != 13 {
-		t.Fatalf("index scope mismatch: want [7,13], got [%d,%d]", index.Scope.SeqS, index.Scope.SeqE)
+	if index.Scope.SeqS != seq(7) || index.Scope.SeqE != seq(13) {
+		t.Fatalf("index scope mismatch: want [7,13], got [%s,%s]", index.Scope.SeqS, index.Scope.SeqE)
 	}
 	if index.Entries != 2 {
 		t.Fatalf("index entries mismatch: want 2, got %d", index.Entries)
@@ -292,26 +292,68 @@ func TestJSONLGetReturnsLastEntryID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload Get: %v", err)
 	}
-	if got.Scope.SeqE != 13 {
-		t.Fatalf("reloaded scope end mismatch: want 13, got %d", got.Scope.SeqE)
+	if got.Scope.SeqE != seq(13) {
+		t.Fatalf("reloaded scope end mismatch: want 13, got %s", got.Scope.SeqE)
 	}
 	lastTimestamp := mustOwnerState(t, reloaded, "owner-a").lastTimestamp
 	if err := reloaded.Store(ctx, entry.NewEntry(entry.WithEntryTimestamp(time.Unix(1, 0)))); err != nil {
 		t.Fatalf("Store after reload: %v", err)
 	}
-	entries, err := reloaded.Range(ctx, view.EntryRange{SeqS: 14, SeqE: 15})
+	entries, err := reloaded.Range(ctx, view.EntryRange{SeqS: seq(14), SeqE: seq(15)})
 	if err != nil {
 		t.Fatalf("Range after reload: %v", err)
 	}
 	if len(entries.Raw) != 1 || !entries.Raw[0].GetTimestamp().After(lastTimestamp) {
 		t.Fatalf("timestamp did not grow after reload: previous=%v entries=%v", lastTimestamp, entries.Raw)
 	}
-	entries, err = reloaded.Range(ctx, view.EntryRange{SeqS: 7, SeqE: 15}, storage.WithRangeAfter(lastTimestamp))
+	entries, err = reloaded.Range(ctx, view.EntryRange{SeqS: seq(7), SeqE: seq(15)}, storage.WithRangeAfter(lastTimestamp))
 	if err != nil {
 		t.Fatalf("Range after timestamp: %v", err)
 	}
 	if len(entries.Raw) != 2 {
 		t.Fatalf("Range after timestamp returned %d entries, want 2", len(entries.Raw))
+	}
+}
+
+func TestJSONLAssignsSequenceBeyondUint64(t *testing.T) {
+	t.Parallel()
+
+	fs := afero.NewMemMapFs()
+	ctx := owner.WithOwnerId(context.Background(), "owner-a")
+	store, err := NewJSONLStorage("session-a", "/tapes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Fs = fs
+	if err := store.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	start := entry.MustParseSeq("18446744073709551616")
+	if err := store.Store(ctx, entry.NewEntry(entry.WithEntryID(start))); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Store(ctx, entry.NewEntry()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Range(ctx, view.EntryRange{SeqS: start, SeqE: start.Next().Next()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Raw) != 2 || got.Raw[0].GetID() != start || got.Raw[1].GetID() != start.Next() {
+		t.Fatalf("huge sequence range = %#v", got.Raw)
+	}
+
+	reloaded, err := NewJSONLStorage("session-a", "/tapes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded.Fs = fs
+	if err := reloaded.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tapeView, err := reloaded.Get(ctx)
+	if err != nil || tapeView.Scope.SeqE != start.Next() {
+		t.Fatalf("reloaded head = %s, %v", tapeView.Scope.SeqE, err)
 	}
 }
 
@@ -341,7 +383,7 @@ func TestJSONLAssignsEntryIDsAtomically(t *testing.T) {
 	}
 	wg.Wait()
 
-	got, err := store.Range(ctx, view.EntryRange{SeqS: 1, SeqE: writes + 1})
+	got, err := store.Range(ctx, view.EntryRange{SeqS: seq(1), SeqE: seq(writes + 1)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,8 +391,8 @@ func TestJSONLAssignsEntryIDsAtomically(t *testing.T) {
 		t.Fatalf("entries len mismatch: want %d, got %d", writes, len(got.Raw))
 	}
 	for i, e := range got.Raw {
-		if e.GetID() != uint64(i+1) {
-			t.Fatalf("entry %d seq mismatch: want %d, got %d", i, i+1, e.GetID())
+		if e.GetID() != seq(i+1) {
+			t.Fatalf("entry %d seq mismatch: want %d, got %s", i, i+1, e.GetID())
 		}
 		if e.GetTimestamp().IsZero() {
 			t.Fatalf("entry %d timestamp is zero", i)
@@ -372,23 +414,23 @@ func TestJSONLRangeAcrossSparseIndexes(t *testing.T) {
 		{
 			path: "/tapes/owner-a/session-a/0.jsonl",
 			entries: []entry.Entry{
-				entry.NewEntry(entry.WithEntryID(1)),
-				entry.NewEntry(entry.WithEntryID(2)),
+				entry.NewEntry(entry.WithEntryID(seq(1))),
+				entry.NewEntry(entry.WithEntryID(seq(2))),
 			},
 		},
 		{
 			path: "/tapes/owner-a/session-a/1.jsonl",
 			entries: []entry.Entry{
-				entry.NewEntry(entry.WithEntryID(3)),
-				entry.NewEntry(entry.WithEntryID(5)),
+				entry.NewEntry(entry.WithEntryID(seq(3))),
+				entry.NewEntry(entry.WithEntryID(seq(5))),
 			},
 		},
 		{
 			path: "/tapes/owner-a/session-a/2.jsonl",
 			entries: []entry.Entry{
-				entry.NewEntry(entry.WithEntryID(7)),
-				entry.NewEntry(entry.WithEntryID(8)),
-				entry.NewEntry(entry.WithEntryID(10)),
+				entry.NewEntry(entry.WithEntryID(seq(7))),
+				entry.NewEntry(entry.WithEntryID(seq(8))),
+				entry.NewEntry(entry.WithEntryID(seq(10))),
 			},
 		},
 	}
@@ -426,20 +468,20 @@ func TestJSONLRangeAcrossSparseIndexes(t *testing.T) {
 	})
 	ctx := owner.WithOwnerId(context.Background(), "owner-a")
 
-	got, err := store.Range(ctx, view.EntryRange{SeqS: 3, SeqE: 8})
+	got, err := store.Range(ctx, view.EntryRange{SeqS: seq(3), SeqE: seq(8)})
 	if err != nil {
 		t.Fatalf("Range: %v", err)
 	}
-	if got.Scope != (view.EntryRange{SeqS: 3, SeqE: 8}) {
+	if got.Scope != (view.EntryRange{SeqS: seq(3), SeqE: seq(8)}) {
 		t.Fatalf("scope mismatch: got %+v", got.Scope)
 	}
-	wantIDs := []uint64{3, 5, 7}
+	wantIDs := []entry.Seq{seq(3), seq(5), seq(7)}
 	if len(got.Raw) != len(wantIDs) {
 		t.Fatalf("entries len mismatch: want %d, got %d", len(wantIDs), len(got.Raw))
 	}
 	for i, wantID := range wantIDs {
 		if got.Raw[i].GetID() != wantID {
-			t.Fatalf("entry %d mismatch: want %d, got %d", i, wantID, got.Raw[i].GetID())
+			t.Fatalf("entry %d mismatch: want %s, got %s", i, wantID, got.Raw[i].GetID())
 		}
 	}
 }
@@ -451,9 +493,13 @@ func TestJSONLRangeRejectsInvalidRange(t *testing.T) {
 	store.Owners.Store("owner-a", &ownerJSONL{sessionId: "session-a"})
 	ctx := owner.WithOwnerId(context.Background(), "owner-a")
 
-	if _, err := store.Range(ctx, view.EntryRange{SeqS: 8, SeqE: 3}); err == nil {
+	if _, err := store.Range(ctx, view.EntryRange{SeqS: seq(8), SeqE: seq(3)}); err == nil {
 		t.Fatal("Range invalid range: want error, got nil")
 	}
+}
+
+func seq(value int) entry.Seq {
+	return entry.SeqFromUint64(uint64(value))
 }
 
 func mustOwnerState(t *testing.T, store *JSONL, ownerID string) *ownerJSONL {

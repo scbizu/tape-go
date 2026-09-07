@@ -30,7 +30,7 @@ type Anchor struct {
 }
 
 func NewAnchor(
-	seq uint64,
+	seq Seq,
 	owner string,
 	kind AnchorKind,
 	ext json.RawMessage,
@@ -56,5 +56,5 @@ func NewAnchor(
 // the archive when the summary is not enough.
 type HandoffAnchor struct {
 	Summary    string
-	SeqS, SeqE uint64
+	SeqS, SeqE Seq
 }

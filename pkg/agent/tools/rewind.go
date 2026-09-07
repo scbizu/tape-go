@@ -11,6 +11,7 @@ import (
 
 	tapeagent "github.com/scbizu/tape-go/pkg/agent"
 	"github.com/scbizu/tape-go/pkg/tape"
+	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
@@ -18,7 +19,7 @@ import (
 
 // RewindArgs configures which handoff anchor range rewind should return.
 type RewindArgs struct {
-	FromSeq    uint64 `json:"from_seq,omitempty" jsonschema:"Entry sequence to rewind from; zero means the latest entry."`
+	FromSeq    string `json:"from_seq,omitempty" jsonschema:"Decimal entry sequence to rewind from; empty or zero means the latest entry."`
 	MaxAnchors uint8  `json:"max_anchors,omitempty" jsonschema:"Maximum anchors to rewind; zero defaults to one."`
 }
 
@@ -54,9 +55,17 @@ func (c rewindCommand) Run(ctx context.Context, _ tapeagent.AgentIO, call tapeag
 		tapeCtx = context.Background()
 	}
 	tapeCtx = owner.WithOwnerId(tapeCtx, c.tape.OwnerID)
+	fromSeq := entry.Seq{}
+	if args.FromSeq != "" {
+		var err error
+		fromSeq, err = entry.ParseSeq(args.FromSeq)
+		if err != nil {
+			return tapeagent.CommandResult{}, fmt.Errorf("agent: rewind from_seq: %w", err)
+		}
+	}
 	r, err := c.tape.Rewind(
 		tapeCtx,
-		storage.WithRewindFromSeq(args.FromSeq),
+		storage.WithRewindFromSeq(fromSeq),
 		storage.WithRewindMaxAnchors(args.MaxAnchors),
 	)
 	if errors.Is(err, storage.ErrNoAnchor) {

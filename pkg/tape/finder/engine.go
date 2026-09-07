@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
@@ -18,11 +19,17 @@ type Engine interface {
 	Find(ctx context.Context, tape storage.EntryStorage) (view.EntryView, error)
 }
 
-type ByEntryID uint64
+type ByEntryID entry.Seq
+
+// NewByEntryID returns an exact-entry finder for id.
+func NewByEntryID(id entry.Seq) ByEntryID {
+	return ByEntryID(id)
+}
 
 func (id ByEntryID) Find(ctx context.Context, tape storage.EntryStorage) (view.EntryView, error) {
-	if id == 0 {
+	seq := entry.Seq(id)
+	if seq.IsZero() {
 		return view.EntryView{}, errors.New("finder: empty entry id")
 	}
-	return tape.Range(ctx, view.EntryRange{SeqS: uint64(id), SeqE: uint64(id) + 1})
+	return tape.Range(ctx, view.EntryRange{SeqS: seq, SeqE: seq.Next()})
 }

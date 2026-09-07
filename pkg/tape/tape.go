@@ -28,7 +28,7 @@ type Tape struct {
 	OwnerID string
 	View    view.EntryRange
 
-	readSeq uint64
+	readSeq entry.Seq
 	readBuf *bytes.Reader
 }
 
@@ -71,7 +71,7 @@ func (t *Tape) Write(p []byte) (int, error) {
 	if err := t.Store(t.context(), e); err != nil {
 		return 0, err
 	}
-	t.View.SeqE = 0
+	t.View.SeqE = entry.Seq{}
 	t.readBuf = nil
 	return len(p), nil
 }
@@ -97,28 +97,28 @@ func (t *Tape) context() context.Context {
 
 func (t *Tape) nextEntryView() error {
 	ctx := t.context()
-	if t.View.SeqE == 0 {
+	if t.View.SeqE.IsZero() {
 		tv, err := t.Get(ctx)
 		if err != nil {
 			return err
 		}
-		t.View.SeqE = entry.NextEntryID(tv.Scope.SeqE)
+		t.View.SeqE = tv.Scope.SeqE.Next()
 	}
-	if t.readSeq == 0 {
+	if t.readSeq.IsZero() {
 		t.readSeq = t.View.SeqS
 	}
-	if t.readSeq >= t.View.SeqE {
+	if t.readSeq.Cmp(t.View.SeqE) >= 0 {
 		return io.EOF
 	}
 
 	ev, err := t.Range(ctx, view.EntryRange{
 		SeqS: t.readSeq,
-		SeqE: entry.NextEntryID(t.readSeq),
+		SeqE: t.readSeq.Next(),
 	})
 	if err != nil {
 		return err
 	}
-	t.readSeq++
+	t.readSeq = t.readSeq.Next()
 	if len(ev.Raw) == 0 {
 		return t.nextEntryView()
 	}
@@ -171,6 +171,6 @@ func (t *Tape) fillEntryDefaults(ctx context.Context, e entry.Entry) (entry.Entr
 }
 
 func (t *Tape) resetReadState() {
-	t.readSeq = 0
+	t.readSeq = entry.Seq{}
 	t.readBuf = nil
 }
