@@ -73,10 +73,8 @@ func (b *Bbolt) Init(ctx context.Context) error {
 				return fmt.Errorf("create bucket %s: %w", name, err)
 			}
 		}
-		if _, err := sessionBucket(tx, metaBucket, ownerID, b.sessionID, true); err != nil {
-			return err
-		}
-		return migrateSessionSeqKeys(tx, ownerID, b.sessionID)
+		_, err := sessionBucket(tx, metaBucket, ownerID, b.sessionID, true)
+		return err
 	})
 }
 
@@ -336,64 +334,6 @@ func sessionBucket(tx *bolt.Tx, top []byte, ownerID, sessionID string, create bo
 	return sessionBucket, nil
 }
 
-func migrateSessionSeqKeys(tx *bolt.Tx, ownerID, sessionID string) error {
-	for _, top := range [][]byte{entriesBucket, anchorsBucket} {
-		bucket, err := sessionBucket(tx, top, ownerID, sessionID, false)
-		if err != nil || bucket == nil {
-			if err != nil {
-				return err
-			}
-			continue
-		}
-		type rewrite struct {
-			oldKey []byte
-			newKey []byte
-			value  []byte
-		}
-		var rewrites []rewrite
-		if err := bucket.ForEach(func(key, value []byte) error {
-			if value == nil || len(key) != 8 {
-				return nil
-			}
-			seq, err := decodeSeqKey(key)
-			if err != nil {
-				return err
-			}
-			rewrites = append(rewrites, rewrite{
-				oldKey: bytes.Clone(key),
-				newKey: seqKey(seq),
-				value:  bytes.Clone(value),
-			})
-			return nil
-		}); err != nil {
-			return fmt.Errorf("bbolt: inspect legacy %s keys: %w", top, err)
-		}
-		for _, item := range rewrites {
-			if existing := bucket.Get(item.newKey); existing != nil && !bytes.Equal(existing, item.value) {
-				return fmt.Errorf("bbolt: conflicting migrated %s sequence key", top)
-			}
-			if err := bucket.Put(item.newKey, item.value); err != nil {
-				return fmt.Errorf("bbolt: migrate %s sequence key: %w", top, err)
-			}
-			if err := bucket.Delete(item.oldKey); err != nil {
-				return fmt.Errorf("bbolt: remove legacy %s sequence key: %w", top, err)
-			}
-		}
-	}
-	meta, err := sessionBucket(tx, metaBucket, ownerID, sessionID, false)
-	if err != nil || meta == nil {
-		return err
-	}
-	state, err := decodeMeta(meta.Get(stateKey))
-	if err != nil {
-		return err
-	}
-	if meta.Get(stateKey) != nil {
-		return putMeta(meta, state)
-	}
-	return nil
-}
-
 var seqKeyPrefix = []byte{0xff, 's', 'e', 'q', 1}
 
 func seqKey(seq entry.Seq) []byte {
@@ -410,9 +350,6 @@ func seqKey(seq entry.Seq) []byte {
 }
 
 func decodeSeqKey(key []byte) (entry.Seq, error) {
-	if len(key) == 8 {
-		return entry.SeqFromUint64(binary.BigEndian.Uint64(key)), nil
-	}
 	if len(key) < len(seqKeyPrefix)+4 || !bytes.Equal(key[:len(seqKeyPrefix)], seqKeyPrefix) {
 		return entry.Seq{}, errors.New("bbolt: invalid sequence key")
 	}

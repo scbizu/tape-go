@@ -3,7 +3,6 @@ package bbolt
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -15,7 +14,6 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
-	bolt "go.etcd.io/bbolt"
 )
 
 func TestBboltStoreGetRange(t *testing.T) {
@@ -236,87 +234,6 @@ func TestSeqKeyOrderMatchesNumericOrder(t *testing.T) {
 		if i > 0 && bytes.Compare(seqKey(values[i-1]), seqKey(value)) >= 0 {
 			t.Fatalf("key order %s >= %s", values[i-1], value)
 		}
-	}
-}
-
-func TestBboltInitMigratesLegacyUint64Keys(t *testing.T) {
-	t.Parallel()
-
-	path := filepath.Join(t.TempDir(), "legacy.db")
-	db, err := bolt.Open(path, 0o600, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = db.Update(func(tx *bolt.Tx) error {
-		for _, top := range [][]byte{entriesBucket, anchorsBucket, metaBucket} {
-			if _, err := tx.CreateBucketIfNotExists(top); err != nil {
-				return err
-			}
-		}
-		entries, err := sessionBucket(tx, entriesBucket, "owner-a", "session-a", true)
-		if err != nil {
-			return err
-		}
-		meta, err := sessionBucket(tx, metaBucket, "owner-a", "session-a", true)
-		if err != nil {
-			return err
-		}
-		var key [8]byte
-		binary.BigEndian.PutUint64(key[:], 7)
-		if err := entries.Put(key[:], []byte(`{"Seq":7,"Ek":"user","Text":"legacy","Owner":"owner-a","Timestamp":"2026-09-07T00:00:00Z"}`)); err != nil {
-			return err
-		}
-		anchors, err := sessionBucket(tx, anchorsBucket, "owner-a", "session-a", true)
-		if err != nil {
-			return err
-		}
-		binary.BigEndian.PutUint64(key[:], 8)
-		anchor := []byte(`{"Seq":8,"Ek":"anchor:handoff","Text":"{\"Summary\":\"legacy anchor\",\"SeqS\":7,\"SeqE\":9}","Owner":"owner-a","Timestamp":"2026-09-07T00:00:01Z"}`)
-		if err := entries.Put(key[:], anchor); err != nil {
-			return err
-		}
-		if err := anchors.Put(key[:], anchor); err != nil {
-			return err
-		}
-		return meta.Put(stateKey, []byte(`{"LastSeq":8,"LastTimestamp":"2026-09-07T00:00:01Z"}`))
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	store, err := NewBboltStorage("session-a", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	ctx := owner.WithOwnerId(context.Background(), "owner-a")
-	if err := store.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-	got, err := store.Range(ctx, view.EntryRange{SeqS: seq(7), SeqE: seq(9)})
-	if err != nil || len(got.Raw) != 2 || got.Raw[0].GetSummary() != "legacy" {
-		t.Fatalf("legacy range = %#v, %v", got.Raw, err)
-	}
-	rewound, err := store.Rewind(ctx)
-	if err != nil || rewound != (view.EntryRange{SeqS: seq(7), SeqE: seq(9)}) {
-		t.Fatalf("legacy rewind = %+v, %v", rewound, err)
-	}
-	err = store.db.View(func(tx *bolt.Tx) error {
-		entries, err := sessionBucket(tx, entriesBucket, "owner-a", "session-a", false)
-		if err != nil {
-			return err
-		}
-		key, _ := entries.Cursor().First()
-		if len(key) == 8 {
-			return errors.New("legacy key was not migrated")
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 }
 

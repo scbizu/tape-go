@@ -14,9 +14,9 @@
 
 JSONL files require no rewrite: the decoder reads legacy numeric sequences, while new lines use strings.
 
-bbolt entry and anchor keys move from an eight-byte `uint64` encoding to a versioned, numerically ordered encoding composed of a fixed marker, a big-endian magnitude length, and the big-endian magnitude. `Init` transactionally rewrites legacy keys before serving the owner/session. Metadata reads legacy numeric `LastSeq` and is rewritten using the string codec.
+bbolt entry and anchor keys use a versioned, numerically ordered encoding composed of a fixed marker, a big-endian magnitude length, and the big-endian magnitude. There is no legacy-key migration path; existing stores with eight-byte `uint64` keys are unsupported and callers must start with a new store.
 
-The compatibility direction is forward-only. After this version appends a JSONL string sequence or migrates a bbolt session, older tape-go binaries cannot read that new data. Operators must back up persistent stores before the first upgraded open when rollback is required.
+The compatibility direction is forward-only. After this version appends a JSONL string sequence or creates a bbolt store, older tape-go binaries cannot read that new data. No old bbolt store is rewritten automatically.
 
 ## A2A versions
 
