@@ -1,0 +1,136 @@
+package jev
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+)
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) Do(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func jsonResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+func TestClientClassify(t *testing.T) {
+	t.Parallel()
+
+	httpClient := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		var request classifyRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Model != DefaultModel || request.State.Query != "database failure" || len(request.Questions) != 3 {
+			t.Fatalf("unexpected request: %#v", request)
+		}
+		return jsonResponse(http.StatusOK, `{
+			"model":"jev-1.13.0",
+			"answers":{
+				"candidate_0":{"type":"score","score":1.0,"confidence":0.9},
+				"candidate_1":{"type":"score","score":3.0,"confidence":0.8},
+				"candidate_2":{"type":"score","score":2.0,"confidence":0.7}
+			}
+		}`), nil
+	})
+
+	client, err := NewClient("secret", WithHTTPClient(httpClient), WithMaxRetries(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.Classify(context.Background(), "database failure", []string{"old", "best", "related"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0].Index != 0 || got[0].Score != 1 || got[1].Index != 1 || got[1].Score != 3 {
+		t.Fatalf("Classify = %#v", got)
+	}
+}
+
+func TestClientShouldAnchor(t *testing.T) {
+	t.Parallel()
+
+	httpClient := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var request struct {
+			State     string                  `json:"state"`
+			Questions map[string]noulQuestion `json:"questions"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		question := request.Questions["should_anchor"]
+		if request.State != "durable fact" || question.Type != "noul" || question.Criteria["true"] == "" {
+			t.Fatalf("unexpected request: %#v", request)
+		}
+		return jsonResponse(http.StatusOK, `{"answers":{"should_anchor":{"type":"noul","noul":0.91}}}`), nil
+	})
+	client, err := NewClient("secret", WithHTTPClient(httpClient), WithMaxRetries(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.ShouldAnchor(context.Background(), "durable fact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != .91 {
+		t.Fatalf("ShouldAnchor = %v", got)
+	}
+}
+
+func TestClientRetriesRateLimit(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	httpClient := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			response := jsonResponse(http.StatusTooManyRequests, "")
+			response.Header.Set("Retry-After", "0")
+			return response, nil
+		}
+		return jsonResponse(http.StatusOK, `{"model":"jev-1.13.0","answers":{"candidate_0":{"type":"score","score":3,"confidence":1}}}`), nil
+	})
+
+	client, err := NewClient("secret", WithHTTPClient(httpClient), WithMaxRetries(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Classify(context.Background(), "query", []string{"hit"}); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+}
+
+func TestClientReturnsAPIError(t *testing.T) {
+	t.Parallel()
+
+	httpClient := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusUnauthorized, `{"detail":"invalid key"}`), nil
+	})
+
+	client, err := NewClient("bad", WithHTTPClient(httpClient), WithMaxRetries(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Classify(context.Background(), "query", []string{"hit"})
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("Classify error = %v", err)
+	}
+}

@@ -42,6 +42,31 @@ func TestBboltStoreGetRange(t *testing.T) {
 	}
 }
 
+func TestBboltCandidateIndex(t *testing.T) {
+	t.Parallel()
+
+	store, ctx := newStore(t, "owner-a", "session-a")
+	defer store.Close()
+	if err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent("ordinary"))); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(entry.HandoffAnchor{Summary: "searchable", SeqS: seq(1), SeqE: seq(2)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Store(ctx, entry.NewAnchor(entry.Seq{}, "owner-a", entry.AnchorKindJev, payload)); err != nil {
+		t.Fatal(err)
+	}
+	items, err := store.CandidateIndex(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Seq != seq(2) || items[0].Summary != "searchable" ||
+		items[0].Scope != (view.EntryRange{SeqS: seq(1), SeqE: seq(2)}) {
+		t.Fatalf("CandidateIndex = %#v", items)
+	}
+}
+
 func TestBboltSeparatesOwnerState(t *testing.T) {
 	t.Parallel()
 

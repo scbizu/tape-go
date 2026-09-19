@@ -129,6 +129,14 @@ func (s *semanticStore) SemanticIndex(context.Context) (SemanticIndex, error) {
 	return s.index, nil
 }
 
+func (s *semanticStore) CandidateIndex(context.Context) ([]Candidate, error) {
+	out := make([]Candidate, 0, len(s.index.Items))
+	for _, item := range s.index.Items {
+		out = append(out, Candidate{Summary: item.Summary, Scope: item.Scope})
+	}
+	return out, nil
+}
+
 type fakeModel struct {
 	enabled   bool
 	vectors   map[string][]float32

@@ -11,6 +11,7 @@ type AnchorKind uint32
 const (
 	AnchorKindHandoff AnchorKind = iota + 1
 	AnchorKindCustom
+	AnchorKindJev
 )
 
 func (ak AnchorKind) String() string {
@@ -19,6 +20,8 @@ func (ak AnchorKind) String() string {
 		return "anchor:handoff"
 	case AnchorKindCustom:
 		return "anchor:custom"
+	case AnchorKindJev:
+		return "anchor:jev"
 	}
 	panic(fmt.Sprintf("unknown anchor kind: %d", ak))
 }

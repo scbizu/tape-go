@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
@@ -21,15 +22,72 @@ import (
 // 得益于这个机制，我们可以让 agent 自己判断什么时候该 handoff , 或者自己梳理上下文
 var _ (io.ReadWriteCloser) = (*Tape)(nil)
 
+type JevAnchorer interface {
+	Anchor(context.Context, entry.EntryLike, view.EntryRange) (entry.EntryLike, bool, error)
+}
+
 // Tape is the agent's backend
 type Tape struct {
 	storage.TapeStorage
 
-	OwnerID string
-	View    view.EntryRange
+	OwnerID          string
+	View             view.EntryRange
+	JevAnchorer      JevAnchorer
+	OnJevAnchorError func(error)
 
+	storeMu sync.Mutex
 	readSeq entry.Seq
 	readBuf *bytes.Reader
+}
+
+// Store appends an entry, then optionally derives an anchor:jev memory point.
+// Jev anchoring is a fail-open post-write index operation: its errors are sent
+// to OnJevAnchorError and never make a committed primary entry look uncommitted.
+func (t *Tape) Store(ctx context.Context, e entry.EntryLike) error {
+	if t.JevAnchorer == nil || e == nil || e.GetKind().IsAnchor() {
+		return t.TapeStorage.Store(ctx, e)
+	}
+
+	t.storeMu.Lock()
+	if err := t.TapeStorage.Store(ctx, e); err != nil {
+		t.storeMu.Unlock()
+		return err
+	}
+	seq := e.GetID()
+	if seq.IsZero() {
+		tv, err := t.Get(ctx)
+		if err != nil {
+			t.storeMu.Unlock()
+			t.reportJevAnchorError(fmt.Errorf("tape: resolve Jev anchor scope: %w", err))
+			return nil
+		}
+		seq = tv.Scope.SeqE
+	}
+	t.storeMu.Unlock()
+
+	anchor, ok, err := t.JevAnchorer.Anchor(ctx, e, view.EntryRange{SeqS: seq, SeqE: entry.NextEntryID(seq)})
+	if err != nil {
+		t.reportJevAnchorError(fmt.Errorf("tape: Jev anchor decision: %w", err))
+		return nil
+	}
+	if ok {
+		if anchor == nil {
+			t.reportJevAnchorError(errors.New("tape: Jev anchorer returned nil anchor"))
+			return nil
+		}
+		t.storeMu.Lock()
+		defer t.storeMu.Unlock()
+		if err := t.TapeStorage.Store(ctx, anchor); err != nil {
+			t.reportJevAnchorError(fmt.Errorf("tape: store Jev anchor: %w", err))
+		}
+	}
+	return nil
+}
+
+func (t *Tape) reportJevAnchorError(err error) {
+	if t.OnJevAnchorError != nil {
+		t.OnJevAnchorError(err)
+	}
 }
 
 // Read reads out to `p` as the entry (entries for batch approach ?) bytes.

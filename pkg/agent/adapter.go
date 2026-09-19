@@ -39,10 +39,26 @@ type TapeAdapter struct {
 	Tape    *tape.Tape
 	AppName string
 
-	state *tapeState
+	state        *tapeState
+	memoryFinder func(string) finder.Engine
 }
 
-func NewTapeAdapter(t *tape.Tape, appName string) (*TapeAdapter, error) {
+type TapeAdapterOption func(*TapeAdapter) error
+
+// WithMemoryFinder configures the search engine used by SearchMemory. The
+// factory receives each request query and may return Semantic, Jev, or another
+// finder.Engine implementation.
+func WithMemoryFinder(factory func(string) finder.Engine) TapeAdapterOption {
+	return func(adapter *TapeAdapter) error {
+		if factory == nil {
+			return errors.New("agent: nil memory finder")
+		}
+		adapter.memoryFinder = factory
+		return nil
+	}
+}
+
+func NewTapeAdapter(t *tape.Tape, appName string, opts ...TapeAdapterOption) (*TapeAdapter, error) {
 	if t == nil {
 		return nil, errors.New("agent: nil tape")
 	}
@@ -52,7 +68,16 @@ func NewTapeAdapter(t *tape.Tape, appName string) (*TapeAdapter, error) {
 	if t.OwnerID == "" {
 		return nil, errors.New("agent: empty tape owner")
 	}
-	return &TapeAdapter{Tape: t, AppName: appName, state: newTapeState(nil)}, nil
+	adapter := &TapeAdapter{Tape: t, AppName: appName, state: newTapeState(nil)}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		if err := opt(adapter); err != nil {
+			return nil, err
+		}
+	}
+	return adapter, nil
 }
 
 func (a *TapeAdapter) Create(ctx context.Context, req *session.CreateRequest) (*session.CreateResponse, error) {
@@ -151,7 +176,14 @@ func (a *TapeAdapter) SearchMemory(ctx context.Context, req *memory.SearchReques
 	if err := a.validateIdentity(ctx, req.AppName, req.UserID, ""); err != nil {
 		return nil, err
 	}
-	entries, err := finder.SemanticPrompt(req.Query).Find(a.tapeContext(ctx), a.Tape)
+	var search finder.Engine = finder.SemanticPrompt(req.Query)
+	if a.memoryFinder != nil {
+		search = a.memoryFinder(req.Query)
+		if search == nil {
+			return nil, errors.New("agent: memory finder returned nil engine")
+		}
+	}
+	entries, err := search.Find(a.tapeContext(ctx), a.Tape)
 	if err != nil {
 		return nil, err
 	}

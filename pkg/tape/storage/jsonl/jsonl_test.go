@@ -98,6 +98,37 @@ func TestJSONLInitCreatesSessionFile(t *testing.T) {
 	}
 }
 
+func TestJSONLCandidateIndex(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewJSONLStorage("session-a", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := owner.WithOwnerId(context.Background(), "owner-a")
+	if err := store.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent("ordinary"))); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(entry.HandoffAnchor{Summary: "searchable", SeqS: seq(1), SeqE: seq(2)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Store(ctx, entry.NewAnchor(entry.Seq{}, "owner-a", entry.AnchorKindJev, payload)); err != nil {
+		t.Fatal(err)
+	}
+	items, err := store.CandidateIndex(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Seq != seq(2) || items[0].Summary != "searchable" ||
+		items[0].Scope != (view.EntryRange{SeqS: seq(1), SeqE: seq(2)}) {
+		t.Fatalf("CandidateIndex = %#v", items)
+	}
+}
+
 func TestJSONLInitIsIdempotentForSameInstance(t *testing.T) {
 	t.Parallel()
 

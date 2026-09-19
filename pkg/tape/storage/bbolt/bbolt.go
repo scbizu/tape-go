@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
+	"github.com/scbizu/tape-go/pkg/tape/finder"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
@@ -22,6 +23,7 @@ import (
 )
 
 var _ storage.TapeStorage = (*Bbolt)(nil)
+var _ finder.CandidateIndexer = (*Bbolt)(nil)
 
 var (
 	entriesBucket = []byte("entries")
@@ -208,6 +210,37 @@ func (b *Bbolt) Range(ctx context.Context, r view.EntryRange, opts ...storage.Ra
 	return out, err
 }
 
+func (b *Bbolt) CandidateIndex(ctx context.Context) ([]finder.Candidate, error) {
+	ownerID, err := owner.GetOwnerId(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if b.db == nil {
+		return nil, errors.New("bbolt: storage is not initialized")
+	}
+	var result []finder.Candidate
+	err = b.db.View(func(tx *bolt.Tx) error {
+		anchors, err := sessionBucket(tx, anchorsBucket, ownerID, b.sessionID, false)
+		if err != nil || anchors == nil {
+			return err
+		}
+		return anchors.ForEach(func(_, value []byte) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			e, err := decodeEntry(value)
+			if err != nil {
+				return err
+			}
+			if candidate, ok := finder.CandidateFromAnchor(e); ok {
+				result = append(result, candidate)
+			}
+			return nil
+		})
+	})
+	return result, err
+}
+
 func (b *Bbolt) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.EntryRange, error) {
 	option := storage.RewindOption{MaxAnchors: 1}
 	for _, opt := range opts {
@@ -257,6 +290,9 @@ func (b *Bbolt) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.Entr
 			e, err := decodeEntry(v)
 			if err != nil {
 				return err
+			}
+			if e.GetKind() != entry.EntryKind(entry.AnchorKindHandoff.String()) {
+				continue
 			}
 			var anchor entry.HandoffAnchor
 			if err := json.Unmarshal([]byte(e.GetSummary()), &anchor); err != nil {

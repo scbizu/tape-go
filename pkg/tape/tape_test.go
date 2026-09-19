@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
+	"github.com/scbizu/tape-go/pkg/tape/finder"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/jsonl"
@@ -86,6 +87,75 @@ func TestTapeCloseDelegatesToUnderlyingCloser(t *testing.T) {
 	tape = &Tape{TapeStorage: noopStorage{}}
 	if err := tape.Close(); err != nil {
 		t.Fatalf("Close with non-closer storage: %v", err)
+	}
+}
+
+type jevAnchorerFunc func(context.Context, entry.EntryLike, view.EntryRange) (entry.EntryLike, bool, error)
+
+func (f jevAnchorerFunc) Anchor(ctx context.Context, e entry.EntryLike, scope view.EntryRange) (entry.EntryLike, bool, error) {
+	return f(ctx, e, scope)
+}
+
+func TestTapeJevAnchoringRunsAfterPrimaryStore(t *testing.T) {
+	t.Parallel()
+
+	tape := newMemoryTape(t, "owner-a", "session-a")
+	tape.JevAnchorer = jevAnchorerFunc(func(ctx context.Context, e entry.EntryLike, scope view.EntryRange) (entry.EntryLike, bool, error) {
+		stored, err := tape.Range(ctx, scope)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(stored.Raw) != 1 || stored.Raw[0].GetSummary() != "durable" {
+			t.Fatalf("primary entry was not stored before Jev decision: %#v", stored.Raw)
+		}
+		payload, _ := json.Marshal(entry.HandoffAnchor{Summary: e.GetSummary(), SeqS: scope.SeqS, SeqE: scope.SeqE})
+		return entry.NewAnchor(entry.Seq{}, e.GetOwner(), entry.AnchorKindJev, payload), true, nil
+	})
+	ctx := owner.WithOwnerId(context.Background(), "owner-a")
+	if err := tape.Store(ctx, entry.NewEntry(entry.WithEntryContent("durable"), entry.WithEntryOwner("owner-a"))); err != nil {
+		t.Fatal(err)
+	}
+	index := tape.TapeStorage.(interface {
+		CandidateIndex(context.Context) ([]finder.Candidate, error)
+	})
+	candidates, err := index.CandidateIndex(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].Scope != (view.EntryRange{
+		SeqS: entry.SeqFromUint64(1),
+		SeqE: entry.SeqFromUint64(2),
+	}) {
+		t.Fatalf("candidates = %#v", candidates)
+	}
+	if _, err := tape.Rewind(ctx); !errors.Is(err, storage.ErrNoAnchor) {
+		t.Fatalf("full rewind recognized Jev anchor: %v", err)
+	}
+}
+
+func TestTapeJevAnchorFailureIsFailOpen(t *testing.T) {
+	t.Parallel()
+
+	tape := newMemoryTape(t, "owner-a", "session-a")
+	want := errors.New("classifier unavailable")
+	tape.JevAnchorer = jevAnchorerFunc(func(context.Context, entry.EntryLike, view.EntryRange) (entry.EntryLike, bool, error) {
+		return nil, false, want
+	})
+	var reported error
+	tape.OnJevAnchorError = func(err error) { reported = err }
+	ctx := owner.WithOwnerId(context.Background(), "owner-a")
+	if err := tape.Store(ctx, entry.NewEntry(entry.WithEntryContent("committed"))); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(reported, want) {
+		t.Fatalf("reported error = %v", reported)
+	}
+	got, err := tape.Range(ctx, view.EntryRange{
+		SeqS: entry.SeqFromUint64(1),
+		SeqE: entry.SeqFromUint64(2),
+	})
+	if err != nil || len(got.Raw) != 1 || got.Raw[0].GetSummary() != "committed" {
+		t.Fatalf("primary entry was not committed: %#v, %v", got, err)
 	}
 }
 
