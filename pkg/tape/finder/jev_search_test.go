@@ -1,7 +1,6 @@
 package finder
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -11,7 +10,7 @@ import (
 )
 
 type fakeJevClassifier struct {
-	candidates []json.RawMessage
+	candidates []entry.JevMemoryState
 	results    []Classification
 }
 
@@ -40,7 +39,7 @@ func TestAnchorKindsHaveSeparateSearchSemantics(t *testing.T) {
 		t.Fatal("handoff anchor became a Jev candidate")
 	}
 	jevPayload, err := json.Marshal(entry.JevAnchor{
-		State: json.RawMessage(`{"overview":"archived decision"}`),
+		State: entry.JevMemoryState{Overview: "archived decision"},
 		SeqS:  entry.SeqFromUint64(4),
 		SeqE:  entry.SeqFromUint64(9),
 	})
@@ -70,8 +69,8 @@ func TestAnchorKindsHaveSeparateSearchSemantics(t *testing.T) {
 	}
 }
 
-func (c *fakeJevClassifier) Classify(_ context.Context, _ string, candidates []json.RawMessage) ([]Classification, error) {
-	c.candidates = append([]json.RawMessage(nil), candidates...)
+func (c *fakeJevClassifier) Classify(_ context.Context, _ string, candidates []entry.JevMemoryState) ([]Classification, error) {
+	c.candidates = append([]entry.JevMemoryState(nil), candidates...)
 	return append([]Classification(nil), c.results...), nil
 }
 
@@ -112,7 +111,7 @@ func TestJevCandidateLimitKeepsRecentCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(classifier.candidates) != 1 || !bytes.Equal(classifier.candidates[0], json.RawMessage(`{"overview":"recent"}`)) {
+	if len(classifier.candidates) != 1 || classifier.candidates[0].Overview != "recent" {
 		t.Fatalf("classified candidates = %#v", classifier.candidates)
 	}
 	if got[0].Scope != (view.EntryRange{SeqS: entry.SeqFromUint64(2), SeqE: entry.SeqFromUint64(3)}) {

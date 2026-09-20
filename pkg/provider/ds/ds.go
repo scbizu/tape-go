@@ -15,6 +15,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/scbizu/tape-go/pkg/llm"
+	"github.com/scbizu/tape-go/pkg/tape/entry"
 
 	"google.golang.org/adk/model"
 )
@@ -34,16 +35,6 @@ var _ llm.Model = (*Model)(nil)
 var _ llm.Summarizer = (*Model)(nil)
 
 var ErrEmbeddingUnsupported = errors.New("ds: embedding is not supported")
-
-type jevMemoryState struct {
-	Overview       string   `json:"overview"`
-	Facts          []string `json:"facts"`
-	Decisions      []string `json:"decisions"`
-	Constraints    []string `json:"constraints"`
-	Preferences    []string `json:"preferences"`
-	Results        []string `json:"results"`
-	UnresolvedWork []string `json:"unresolved_work"`
-}
 
 func NewModel(apiKey, modelName string, opts ...deepseek.Option) (*Model, error) {
 	if modelName == "" {
@@ -152,7 +143,7 @@ func (m *Model) Summarize(ctx context.Context, state string) (string, error) {
 			return "", fmt.Errorf("ds: summarize response missing field %q", name)
 		}
 	}
-	var memory jevMemoryState
+	var memory entry.JevMemoryState
 	if err := json.Unmarshal([]byte(summary), &memory); err != nil {
 		return "", fmt.Errorf("ds: summarize invalid memory state: %w", err)
 	}

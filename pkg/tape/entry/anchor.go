@@ -62,26 +62,33 @@ type HandoffAnchor struct {
 	SeqS, SeqE Seq
 }
 
+// JevMemoryState is the structured memory representation generated for Jev.
+type JevMemoryState struct {
+	Overview       string   `json:"overview"`
+	Facts          []string `json:"facts"`
+	Decisions      []string `json:"decisions"`
+	Constraints    []string `json:"constraints"`
+	Preferences    []string `json:"preferences"`
+	Results        []string `json:"results"`
+	UnresolvedWork []string `json:"unresolved_work"`
+}
+
+func (s JevMemoryState) IsZero() bool {
+	return s.Overview == "" &&
+		len(s.Facts)+len(s.Decisions)+len(s.Constraints)+len(s.Preferences)+len(s.Results)+len(s.UnresolvedWork) == 0
+}
+
 // JevAnchor is a classifier-triggered memory checkpoint. Unlike a handoff
 // anchor, it does not change the active view and is only consumed by Jev search.
 type JevAnchor struct {
-	State      json.RawMessage
+	State      JevMemoryState
 	SeqS, SeqE Seq
 }
 
 // NewJevAnchor constructs an anchor:jev entry from its typed payload.
 func NewJevAnchor(seq Seq, owner string, anchor JevAnchor) (Entry, error) {
-	if len(anchor.State) == 0 || !json.Valid(anchor.State) {
-		return Entry{}, fmt.Errorf("entry: Jev anchor state must be valid JSON")
-	}
-	var state any
-	if err := json.Unmarshal(anchor.State, &state); err != nil {
-		return Entry{}, fmt.Errorf("entry: decode Jev anchor state: %w", err)
-	}
-	switch state.(type) {
-	case map[string]any, []any:
-	default:
-		return Entry{}, fmt.Errorf("entry: Jev anchor state must be a JSON object or array")
+	if anchor.State.IsZero() {
+		return Entry{}, fmt.Errorf("entry: Jev anchor state is empty")
 	}
 	payload, err := json.Marshal(anchor)
 	if err != nil {

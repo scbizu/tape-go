@@ -11,7 +11,7 @@ import (
 // Candidate is a structured Jev state and the tape range it represents.
 type Candidate struct {
 	Seq   entry.Seq
-	State json.RawMessage
+	State entry.JevMemoryState
 	Scope view.EntryRange
 }
 
@@ -27,7 +27,7 @@ type AnchorMetadata struct {
 	Seq     entry.Seq
 	Kind    entry.AnchorKind
 	Summary string
-	State   json.RawMessage
+	State   entry.JevMemoryState
 	Scope   view.EntryRange
 }
 
@@ -46,7 +46,7 @@ func AnchorFromEntry(e entry.EntryLike) (AnchorMetadata, bool) {
 		return AnchorMetadata{}, false
 	}
 	var summary string
-	var state json.RawMessage
+	var state entry.JevMemoryState
 	var seqS, seqE entry.Seq
 	switch kind {
 	case entry.AnchorKindHandoff:
@@ -78,21 +78,8 @@ func AnchorFromEntry(e entry.EntryLike) (AnchorMetadata, bool) {
 // Ordinary entries and handoff anchors are not Jev search candidates.
 func CandidateFromAnchor(e entry.EntryLike) (Candidate, bool) {
 	anchor, ok := AnchorFromEntry(e)
-	if !ok || anchor.Kind != entry.AnchorKindJev || !isStructuredState(anchor.State) {
+	if !ok || anchor.Kind != entry.AnchorKindJev || anchor.State.IsZero() {
 		return Candidate{}, false
 	}
 	return Candidate{Seq: anchor.Seq, State: anchor.State, Scope: anchor.Scope}, true
-}
-
-func isStructuredState(state json.RawMessage) bool {
-	var value any
-	if len(state) == 0 || json.Unmarshal(state, &value) != nil {
-		return false
-	}
-	switch value.(type) {
-	case map[string]any, []any:
-		return true
-	default:
-		return false
-	}
 }

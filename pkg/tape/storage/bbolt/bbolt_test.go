@@ -50,7 +50,7 @@ func TestBboltCandidateIndex(t *testing.T) {
 	if err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent("ordinary"))); err != nil {
 		t.Fatal(err)
 	}
-	payload, err := json.Marshal(entry.JevAnchor{State: json.RawMessage(`{"overview":"searchable"}`), SeqS: seq(1), SeqE: seq(2)})
+	payload, err := json.Marshal(entry.JevAnchor{State: entry.JevMemoryState{Overview: "searchable"}, SeqS: seq(1), SeqE: seq(2)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestBboltCandidateIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Seq != seq(2) || !bytes.Equal(items[0].State, json.RawMessage(`{"overview":"searchable"}`)) ||
+	if len(items) != 1 || items[0].Seq != seq(2) || items[0].State.Overview != "searchable" ||
 		items[0].Scope != (view.EntryRange{SeqS: seq(1), SeqE: seq(2)}) {
 		t.Fatalf("CandidateIndex = %#v", items)
 	}

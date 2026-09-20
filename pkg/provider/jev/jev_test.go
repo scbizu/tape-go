@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/scbizu/tape-go/pkg/tape/entry"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -38,8 +40,7 @@ func TestClientClassify(t *testing.T) {
 		if request.Model != DefaultModel || request.State.Query != "database failure" || len(request.Questions) != 3 {
 			t.Fatalf("unexpected request: %#v", request)
 		}
-		var memory map[string]any
-		if err := json.Unmarshal(request.State.Candidates[0].State, &memory); err != nil || memory["overview"] != "old memory" {
+		if request.State.Candidates[0].State.Overview != "old memory" {
 			t.Fatalf("candidate JSON was not sent as structured state: %#v", request.State.Candidates[0].State)
 		}
 		return jsonResponse(http.StatusOK, `{
@@ -56,8 +57,8 @@ func TestClientClassify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := client.Classify(context.Background(), "database failure", []json.RawMessage{
-		json.RawMessage(`{"overview":"old memory"}`), json.RawMessage(`{"overview":"best memory"}`), json.RawMessage(`{"overview":"related memory"}`),
+	got, err := client.Classify(context.Background(), "database failure", []entry.JevMemoryState{
+		{Overview: "old memory"}, {Overview: "best memory"}, {Overview: "related memory"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +123,7 @@ func TestClientValidateSummary(t *testing.T) {
 	got, err := client.ValidateSummary(
 		context.Background(),
 		json.RawMessage(`{"entries":["source"]}`),
-		json.RawMessage(`{"overview":"summary"}`),
+		entry.JevMemoryState{Overview: "summary"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +151,7 @@ func TestClientRetriesRateLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Classify(context.Background(), "query", []json.RawMessage{json.RawMessage(`{"overview":"hit"}`)}); err != nil {
+	if _, err := client.Classify(context.Background(), "query", []entry.JevMemoryState{{Overview: "hit"}}); err != nil {
 		t.Fatal(err)
 	}
 	if attempts != 2 {
@@ -169,7 +170,7 @@ func TestClientReturnsAPIError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Classify(context.Background(), "query", []json.RawMessage{json.RawMessage(`{"overview":"hit"}`)})
+	_, err = client.Classify(context.Background(), "query", []entry.JevMemoryState{{Overview: "hit"}})
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("Classify error = %v", err)

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/finder"
 )
 
@@ -101,8 +102,8 @@ func NewClient(apiKey string, opts ...Option) (*Client, error) {
 }
 
 type candidateState struct {
-	ID    string          `json:"id"`
-	State json.RawMessage `json:"state"`
+	ID    string               `json:"id"`
+	State entry.JevMemoryState `json:"state"`
 }
 
 type question struct {
@@ -154,11 +155,11 @@ func (c *Client) ShouldAnchor(ctx context.Context, summary string) (float64, err
 		return 0, errors.New("jev: empty anchor state")
 	}
 	payload := struct {
-		State     any                     `json:"state"`
+		State     string                  `json:"state"`
 		Model     string                  `json:"model"`
 		Questions map[string]noulQuestion `json:"questions"`
 	}{
-		State: stateValue(summary),
+		State: summary,
 		Model: c.model,
 		Questions: map[string]noulQuestion{
 			"should_anchor": {
@@ -194,22 +195,21 @@ func (c *Client) ShouldAnchor(ctx context.Context, summary string) (float64, err
 
 // ValidateSummary asks Jev whether a generated summary is fully supported by
 // its source view and preserves the durable information needed for retrieval.
-func (c *Client) ValidateSummary(ctx context.Context, state, summary json.RawMessage) (float64, error) {
+func (c *Client) ValidateSummary(ctx context.Context, state json.RawMessage, summary entry.JevMemoryState) (float64, error) {
 	if c == nil || c.httpClient == nil {
 		return 0, errors.New("jev: client is not enabled")
 	}
-	if !isStructuredState(state) || !isStructuredState(summary) {
+	if !isStructuredState(state) || summary.IsZero() {
 		return 0, errors.New("jev: summary validation requires state and summary")
 	}
 	payload := struct {
-		State     map[string]json.RawMessage `json:"state"`
-		Model     string                     `json:"model"`
-		Questions map[string]noulQuestion    `json:"questions"`
+		State struct {
+			SourceView      json.RawMessage      `json:"source_view"`
+			ProposedSummary entry.JevMemoryState `json:"proposed_summary"`
+		} `json:"state"`
+		Model     string                  `json:"model"`
+		Questions map[string]noulQuestion `json:"questions"`
 	}{
-		State: map[string]json.RawMessage{
-			"source_view":      state,
-			"proposed_summary": summary,
-		},
 		Model: c.model,
 		Questions: map[string]noulQuestion{
 			"is_faithful": {
@@ -222,6 +222,8 @@ func (c *Client) ValidateSummary(ctx context.Context, state, summary json.RawMes
 			},
 		},
 	}
+	payload.State.SourceView = state
+	payload.State.ProposedSummary = summary
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return 0, fmt.Errorf("jev: encode summary validation: %w", err)
@@ -245,7 +247,7 @@ func (c *Client) ValidateSummary(ctx context.Context, state, summary json.RawMes
 
 // Classify asks Jev to independently score every candidate against the query
 // in one request. Ordering and TopK selection belong to the finder engine.
-func (c *Client) Classify(ctx context.Context, query string, candidates []json.RawMessage) ([]finder.Classification, error) {
+func (c *Client) Classify(ctx context.Context, query string, candidates []entry.JevMemoryState) ([]finder.Classification, error) {
 	if c == nil || c.httpClient == nil {
 		return nil, errors.New("jev: client is not enabled")
 	}
@@ -260,8 +262,8 @@ func (c *Client) Classify(ctx context.Context, query string, candidates []json.R
 	payload.State.Query = query
 	for i, candidate := range candidates {
 		id := candidateID(i)
-		if !isStructuredState(candidate) {
-			return nil, fmt.Errorf("jev: candidate %d is not valid JSON state", i)
+		if candidate.IsZero() {
+			return nil, fmt.Errorf("jev: candidate %d has empty state", i)
 		}
 		payload.State.Candidates = append(payload.State.Candidates, candidateState{ID: id, State: candidate})
 		payload.Questions[id] = question{
@@ -303,18 +305,6 @@ func (c *Client) Classify(ctx context.Context, query string, candidates []json.R
 		results = append(results, finder.Classification{Index: i, Score: answer.Score, Confidence: answer.Confidence})
 	}
 	return results, nil
-}
-
-func stateValue(state string) any {
-	trimmed := strings.TrimSpace(state)
-	var structured any
-	if err := json.Unmarshal([]byte(trimmed), &structured); err == nil {
-		switch structured.(type) {
-		case map[string]any, []any:
-			return structured
-		}
-	}
-	return state
 }
 
 func isStructuredState(state json.RawMessage) bool {

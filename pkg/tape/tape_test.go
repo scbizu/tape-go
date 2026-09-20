@@ -141,7 +141,7 @@ func TestTapeJevAnchoringRunsAfterPrimaryStore(t *testing.T) {
 			t.Fatalf("primary entry was not stored before Jev decision: %#v", memory.Raw)
 		}
 		payload, _ := json.Marshal(entry.JevAnchor{
-			State: json.RawMessage(`{"overview":"durable"}`),
+			State: entry.JevMemoryState{Overview: "durable"},
 			SeqS:  memory.Scope.SeqS,
 			SeqE:  memory.Scope.SeqE,
 		})

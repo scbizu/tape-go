@@ -2,11 +2,11 @@ package finder
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 
+	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
@@ -20,7 +20,7 @@ type Classification struct {
 
 // JevClassifier evaluates candidates directly, without embeddings.
 type JevClassifier interface {
-	Classify(context.Context, string, []json.RawMessage) ([]Classification, error)
+	Classify(context.Context, string, []entry.JevMemoryState) ([]Classification, error)
 }
 
 // Jev is a classifier-based search engine. It is intentionally independent of
@@ -103,7 +103,7 @@ func (j Jev) FindAll(ctx context.Context, tape storage.EntryStorage) ([]view.Ent
 		return nil, nil
 	}
 
-	states := make([]json.RawMessage, len(candidates))
+	states := make([]entry.JevMemoryState, len(candidates))
 	for i := range candidates {
 		states[i] = candidates[i].State
 	}

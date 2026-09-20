@@ -520,7 +520,7 @@ func (j *JSONL) CandidateIndex(ctx context.Context) ([]finder.Candidate, error) 
 	var items []finder.Candidate
 	for _, index := range state.indexes {
 		for _, anchor := range index.anchors {
-			if anchor.Kind == entry.AnchorKindJev && len(anchor.State) != 0 {
+			if anchor.Kind == entry.AnchorKindJev && !anchor.State.IsZero() {
 				items = append(items, finder.Candidate{Seq: anchor.Seq, State: anchor.State, Scope: anchor.Scope})
 			}
 		}

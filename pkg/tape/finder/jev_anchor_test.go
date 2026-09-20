@@ -16,7 +16,7 @@ func (d fixedAnchorDecider) ShouldAnchor(context.Context, string) (float64, erro
 	return float64(d), nil
 }
 
-func (d fixedAnchorDecider) ValidateSummary(context.Context, json.RawMessage, json.RawMessage) (float64, error) {
+func (d fixedAnchorDecider) ValidateSummary(context.Context, json.RawMessage, entry.JevMemoryState) (float64, error) {
 	return float64(d), nil
 }
 
@@ -55,7 +55,7 @@ func TestJevAnchorPolicyCreatesJevAnchor(t *testing.T) {
 	if err := json.Unmarshal([]byte(anchor.GetSummary()), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if string(payload.State) != memoryState ||
+	if payload.State.Overview != "Database region: Tokyo." ||
 		payload.SeqS != entry.SeqFromUint64(4) ||
 		payload.SeqE != entry.SeqFromUint64(5) {
 		t.Fatalf("payload = %#v", payload)
@@ -89,7 +89,7 @@ func (d splitAnchorDecider) ShouldAnchor(context.Context, string) (float64, erro
 	return d.should, nil
 }
 
-func (d splitAnchorDecider) ValidateSummary(context.Context, json.RawMessage, json.RawMessage) (float64, error) {
+func (d splitAnchorDecider) ValidateSummary(context.Context, json.RawMessage, entry.JevMemoryState) (float64, error) {
 	return d.faithful, nil
 }
 
@@ -125,7 +125,7 @@ func TestJevAnchorPolicyRejectsUnstructuredSummary(t *testing.T) {
 		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
 		Raw:   []entry.EntryLike{e},
 	})
-	if err == nil || !strings.Contains(err.Error(), "valid JSON") {
+	if err == nil || !strings.Contains(err.Error(), "decode Jev memory state") {
 		t.Fatalf("error = %v, want structured Jev state error", err)
 	}
 	if ok {

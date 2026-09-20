@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/scbizu/tape-go/pkg/llm"
@@ -15,7 +16,7 @@ import (
 // durable Jev memory checkpoint.
 type JevAnchorDecider interface {
 	ShouldAnchor(context.Context, string) (float64, error)
-	ValidateSummary(context.Context, json.RawMessage, json.RawMessage) (float64, error)
+	ValidateSummary(context.Context, json.RawMessage, entry.JevMemoryState) (float64, error)
 }
 
 // JevAnchorPolicy lets Jev decide when to checkpoint, then delegates the
@@ -66,12 +67,16 @@ func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike,
 	if err != nil {
 		return nil, false, err
 	}
-	summary := json.RawMessage(strings.TrimSpace(summaryText))
-	if len(summary) == 0 {
+	summaryText = strings.TrimSpace(summaryText)
+	if summaryText == "" {
 		return nil, false, errors.New("finder: Jev anchor summarizer returned empty summary")
 	}
-	if !json.Valid(summary) {
-		return nil, false, errors.New("finder: Jev anchor summarizer returned invalid JSON state")
+	var summary entry.JevMemoryState
+	if err := json.Unmarshal([]byte(summaryText), &summary); err != nil {
+		return nil, false, fmt.Errorf("finder: decode Jev memory state: %w", err)
+	}
+	if summary.IsZero() {
+		return nil, false, errors.New("finder: Jev anchor summarizer returned empty memory state")
 	}
 	faithfulness, err := p.Decider.ValidateSummary(ctx, state, summary)
 	if err != nil {
