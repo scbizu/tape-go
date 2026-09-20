@@ -8,12 +8,11 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
-// Candidate is a searchable summary and the tape range it represents.
+// Candidate is a structured Jev state and the tape range it represents.
 type Candidate struct {
-	Seq     entry.Seq
-	Kind    entry.AnchorKind
-	Summary string
-	Scope   view.EntryRange
+	Seq   entry.Seq
+	State json.RawMessage
+	Scope view.EntryRange
 }
 
 // CandidateIndexer exposes search candidates without prescribing a search
@@ -22,12 +21,20 @@ type CandidateIndexer interface {
 	CandidateIndex(context.Context) ([]Candidate, error)
 }
 
-// AnchorFromEntry decodes the searchable metadata carried by a handoff anchor.
-// Summary may be empty because anchors without summaries still delimit rewind
-// ranges, even though they are not useful classifier candidates.
-func AnchorFromEntry(e entry.EntryLike) (Candidate, bool) {
+// AnchorMetadata is the storage index representation shared by handoff and Jev
+// anchors. Summary belongs only to handoff; State belongs only to Jev.
+type AnchorMetadata struct {
+	Seq     entry.Seq
+	Kind    entry.AnchorKind
+	Summary string
+	State   json.RawMessage
+	Scope   view.EntryRange
+}
+
+// AnchorFromEntry decodes the metadata carried by an anchor.
+func AnchorFromEntry(e entry.EntryLike) (AnchorMetadata, bool) {
 	if e == nil || !e.GetKind().IsAnchor() {
-		return Candidate{}, false
+		return AnchorMetadata{}, false
 	}
 	var kind entry.AnchorKind
 	switch e.GetKind() {
@@ -36,38 +43,56 @@ func AnchorFromEntry(e entry.EntryLike) (Candidate, bool) {
 	case entry.EntryKind(entry.AnchorKindJev.String()):
 		kind = entry.AnchorKindJev
 	default:
-		return Candidate{}, false
+		return AnchorMetadata{}, false
 	}
 	var summary string
+	var state json.RawMessage
 	var seqS, seqE entry.Seq
 	switch kind {
 	case entry.AnchorKindHandoff:
 		var anchor entry.HandoffAnchor
 		if err := json.Unmarshal([]byte(e.GetSummary()), &anchor); err != nil {
-			return Candidate{}, false
+			return AnchorMetadata{}, false
 		}
 		summary, seqS, seqE = anchor.Summary, anchor.SeqS, anchor.SeqE
 	case entry.AnchorKindJev:
 		var anchor entry.JevAnchor
 		if err := json.Unmarshal([]byte(e.GetSummary()), &anchor); err != nil {
-			return Candidate{}, false
+			return AnchorMetadata{}, false
 		}
-		summary, seqS, seqE = string(anchor.State), anchor.SeqS, anchor.SeqE
+		state, seqS, seqE = anchor.State, anchor.SeqS, anchor.SeqE
 	}
 	if seqS.Cmp(seqE) > 0 {
-		return Candidate{}, false
+		return AnchorMetadata{}, false
 	}
-	return Candidate{
+	return AnchorMetadata{
 		Seq:     e.GetID(),
 		Kind:    kind,
 		Summary: summary,
+		State:   state,
 		Scope:   view.EntryRange{SeqS: seqS, SeqE: seqE},
 	}, true
 }
 
-// CandidateFromAnchor returns only Jev anchors with a non-empty memory summary.
+// CandidateFromAnchor returns only Jev anchors with structured memory state.
 // Ordinary entries and handoff anchors are not Jev search candidates.
 func CandidateFromAnchor(e entry.EntryLike) (Candidate, bool) {
-	candidate, ok := AnchorFromEntry(e)
-	return candidate, ok && candidate.Kind == entry.AnchorKindJev && candidate.Summary != ""
+	anchor, ok := AnchorFromEntry(e)
+	if !ok || anchor.Kind != entry.AnchorKindJev || !isStructuredState(anchor.State) {
+		return Candidate{}, false
+	}
+	return Candidate{Seq: anchor.Seq, State: anchor.State, Scope: anchor.Scope}, true
+}
+
+func isStructuredState(state json.RawMessage) bool {
+	var value any
+	if len(state) == 0 || json.Unmarshal(state, &value) != nil {
+		return false
+	}
+	switch value.(type) {
+	case map[string]any, []any:
+		return true
+	default:
+		return false
+	}
 }

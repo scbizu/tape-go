@@ -2,6 +2,7 @@ package finder
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -132,7 +133,8 @@ func (s *semanticStore) SemanticIndex(context.Context) (SemanticIndex, error) {
 func (s *semanticStore) CandidateIndex(context.Context) ([]Candidate, error) {
 	out := make([]Candidate, 0, len(s.index.Items))
 	for _, item := range s.index.Items {
-		out = append(out, Candidate{Summary: item.Summary, Scope: item.Scope})
+		state, _ := json.Marshal(map[string]string{"overview": item.Summary})
+		out = append(out, Candidate{State: state, Scope: item.Scope})
 	}
 	return out, nil
 }

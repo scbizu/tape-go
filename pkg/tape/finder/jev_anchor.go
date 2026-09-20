@@ -15,7 +15,7 @@ import (
 // durable Jev memory checkpoint.
 type JevAnchorDecider interface {
 	ShouldAnchor(context.Context, string) (float64, error)
-	ValidateSummary(context.Context, string, string) (float64, error)
+	ValidateSummary(context.Context, json.RawMessage, json.RawMessage) (float64, error)
 }
 
 // JevAnchorPolicy lets Jev decide when to checkpoint, then delegates the
@@ -62,13 +62,16 @@ func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike,
 	if err != nil {
 		return nil, false, err
 	}
-	summary, err := p.Summarizer.Summarize(ctx, state)
+	summaryText, err := p.Summarizer.Summarize(ctx, string(state))
 	if err != nil {
 		return nil, false, err
 	}
-	summary = strings.TrimSpace(summary)
-	if summary == "" {
+	summary := json.RawMessage(strings.TrimSpace(summaryText))
+	if len(summary) == 0 {
 		return nil, false, errors.New("finder: Jev anchor summarizer returned empty summary")
+	}
+	if !json.Valid(summary) {
+		return nil, false, errors.New("finder: Jev anchor summarizer returned invalid JSON state")
 	}
 	faithfulness, err := p.Decider.ValidateSummary(ctx, state, summary)
 	if err != nil {
@@ -85,7 +88,7 @@ func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike,
 		ownerID = memory.Owner
 	}
 	anchor, err := entry.NewJevAnchor(entry.Seq{}, ownerID, entry.JevAnchor{
-		State: json.RawMessage(summary),
+		State: summary,
 		SeqS:  memory.Scope.SeqS,
 		SeqE:  memory.Scope.SeqE,
 	})
@@ -95,7 +98,7 @@ func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike,
 	return anchor, true, nil
 }
 
-func summaryState(memory view.EntryView) (string, error) {
+func summaryState(memory view.EntryView) (json.RawMessage, error) {
 	type summaryEntry struct {
 		Seq     entry.Seq       `json:"seq"`
 		Kind    entry.EntryKind `json:"kind"`
@@ -113,11 +116,11 @@ func summaryState(memory view.EntryView) (string, error) {
 		})
 	}
 	if len(state.Entries) == 0 {
-		return "", errors.New("finder: empty Jev summary view")
+		return nil, errors.New("finder: empty Jev summary view")
 	}
 	data, err := json.Marshal(state)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return string(data), nil
+	return data, nil
 }

@@ -1,6 +1,7 @@
 package jsonl
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -123,7 +124,7 @@ func TestJSONLCandidateIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Seq != seq(2) || items[0].Summary != `{"overview":"searchable"}` ||
+	if len(items) != 1 || items[0].Seq != seq(2) || !bytes.Equal(items[0].State, json.RawMessage(`{"overview":"searchable"}`)) ||
 		items[0].Scope != (view.EntryRange{SeqS: seq(1), SeqE: seq(2)}) {
 		t.Fatalf("CandidateIndex = %#v", items)
 	}

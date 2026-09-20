@@ -1,6 +1,7 @@
 package finder
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -10,7 +11,7 @@ import (
 )
 
 type fakeJevClassifier struct {
-	candidates []string
+	candidates []json.RawMessage
 	results    []Classification
 }
 
@@ -69,8 +70,8 @@ func TestAnchorKindsHaveSeparateSearchSemantics(t *testing.T) {
 	}
 }
 
-func (c *fakeJevClassifier) Classify(_ context.Context, _ string, candidates []string) ([]Classification, error) {
-	c.candidates = append([]string(nil), candidates...)
+func (c *fakeJevClassifier) Classify(_ context.Context, _ string, candidates []json.RawMessage) ([]Classification, error) {
+	c.candidates = append([]json.RawMessage(nil), candidates...)
 	return append([]Classification(nil), c.results...), nil
 }
 
@@ -111,7 +112,7 @@ func TestJevCandidateLimitKeepsRecentCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(classifier.candidates) != 1 || classifier.candidates[0] != "recent" {
+	if len(classifier.candidates) != 1 || !bytes.Equal(classifier.candidates[0], json.RawMessage(`{"overview":"recent"}`)) {
 		t.Fatalf("classified candidates = %#v", classifier.candidates)
 	}
 	if got[0].Scope != (view.EntryRange{SeqS: entry.SeqFromUint64(2), SeqE: entry.SeqFromUint64(3)}) {

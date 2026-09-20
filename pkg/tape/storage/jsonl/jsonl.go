@@ -51,7 +51,7 @@ type JSONLIndex struct {
 	Entries uint64
 
 	lastTimestamp time.Time
-	anchors       []finder.Candidate
+	anchors       []finder.AnchorMetadata
 }
 
 type ownerJSONL struct {
@@ -520,8 +520,8 @@ func (j *JSONL) CandidateIndex(ctx context.Context) ([]finder.Candidate, error) 
 	var items []finder.Candidate
 	for _, index := range state.indexes {
 		for _, anchor := range index.anchors {
-			if anchor.Kind == entry.AnchorKindJev && anchor.Summary != "" {
-				items = append(items, anchor)
+			if anchor.Kind == entry.AnchorKindJev && len(anchor.State) != 0 {
+				items = append(items, finder.Candidate{Seq: anchor.Seq, State: anchor.State, Scope: anchor.Scope})
 			}
 		}
 	}

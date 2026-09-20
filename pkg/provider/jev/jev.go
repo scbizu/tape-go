@@ -101,8 +101,8 @@ func NewClient(apiKey string, opts ...Option) (*Client, error) {
 }
 
 type candidateState struct {
-	ID    string `json:"id"`
-	State any    `json:"state"`
+	ID    string          `json:"id"`
+	State json.RawMessage `json:"state"`
 }
 
 type question struct {
@@ -194,21 +194,21 @@ func (c *Client) ShouldAnchor(ctx context.Context, summary string) (float64, err
 
 // ValidateSummary asks Jev whether a generated summary is fully supported by
 // its source view and preserves the durable information needed for retrieval.
-func (c *Client) ValidateSummary(ctx context.Context, state, summary string) (float64, error) {
+func (c *Client) ValidateSummary(ctx context.Context, state, summary json.RawMessage) (float64, error) {
 	if c == nil || c.httpClient == nil {
 		return 0, errors.New("jev: client is not enabled")
 	}
-	if strings.TrimSpace(state) == "" || strings.TrimSpace(summary) == "" {
+	if !isStructuredState(state) || !isStructuredState(summary) {
 		return 0, errors.New("jev: summary validation requires state and summary")
 	}
 	payload := struct {
-		State     map[string]any          `json:"state"`
-		Model     string                  `json:"model"`
-		Questions map[string]noulQuestion `json:"questions"`
+		State     map[string]json.RawMessage `json:"state"`
+		Model     string                     `json:"model"`
+		Questions map[string]noulQuestion    `json:"questions"`
 	}{
-		State: map[string]any{
-			"source_view":      stateValue(state),
-			"proposed_summary": stateValue(summary),
+		State: map[string]json.RawMessage{
+			"source_view":      state,
+			"proposed_summary": summary,
 		},
 		Model: c.model,
 		Questions: map[string]noulQuestion{
@@ -245,7 +245,7 @@ func (c *Client) ValidateSummary(ctx context.Context, state, summary string) (fl
 
 // Classify asks Jev to independently score every candidate against the query
 // in one request. Ordering and TopK selection belong to the finder engine.
-func (c *Client) Classify(ctx context.Context, query string, candidates []string) ([]finder.Classification, error) {
+func (c *Client) Classify(ctx context.Context, query string, candidates []json.RawMessage) ([]finder.Classification, error) {
 	if c == nil || c.httpClient == nil {
 		return nil, errors.New("jev: client is not enabled")
 	}
@@ -260,7 +260,10 @@ func (c *Client) Classify(ctx context.Context, query string, candidates []string
 	payload.State.Query = query
 	for i, candidate := range candidates {
 		id := candidateID(i)
-		payload.State.Candidates = append(payload.State.Candidates, candidateState{ID: id, State: stateValue(candidate)})
+		if !isStructuredState(candidate) {
+			return nil, fmt.Errorf("jev: candidate %d is not valid JSON state", i)
+		}
+		payload.State.Candidates = append(payload.State.Candidates, candidateState{ID: id, State: candidate})
 		payload.Questions[id] = question{
 			Type:         "score",
 			Instructions: fmt.Sprintf("How relevant is candidate %s to the search query? Judge whether it helps answer or recover the requested earlier context.", id),
@@ -312,6 +315,19 @@ func stateValue(state string) any {
 		}
 	}
 	return state
+}
+
+func isStructuredState(state json.RawMessage) bool {
+	var structured any
+	if len(state) == 0 || json.Unmarshal(state, &structured) != nil {
+		return false
+	}
+	switch structured.(type) {
+	case map[string]any, []any:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) post(ctx context.Context, body []byte, target any) error {

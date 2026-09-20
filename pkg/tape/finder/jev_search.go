@@ -2,6 +2,7 @@ package finder
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -19,7 +20,7 @@ type Classification struct {
 
 // JevClassifier evaluates candidates directly, without embeddings.
 type JevClassifier interface {
-	Classify(context.Context, string, []string) ([]Classification, error)
+	Classify(context.Context, string, []json.RawMessage) ([]Classification, error)
 }
 
 // Jev is a classifier-based search engine. It is intentionally independent of
@@ -102,11 +103,11 @@ func (j Jev) FindAll(ctx context.Context, tape storage.EntryStorage) ([]view.Ent
 		return nil, nil
 	}
 
-	summaries := make([]string, len(candidates))
+	states := make([]json.RawMessage, len(candidates))
 	for i := range candidates {
-		summaries[i] = candidates[i].Summary
+		states[i] = candidates[i].State
 	}
-	classified, err := j.Classifier.Classify(ctx, j.Query, summaries)
+	classified, err := j.Classifier.Classify(ctx, j.Query, states)
 	if err != nil {
 		return nil, fmt.Errorf("finder: Jev classify: %w", err)
 	}

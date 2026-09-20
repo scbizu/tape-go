@@ -16,7 +16,7 @@ func (d fixedAnchorDecider) ShouldAnchor(context.Context, string) (float64, erro
 	return float64(d), nil
 }
 
-func (d fixedAnchorDecider) ValidateSummary(context.Context, string, string) (float64, error) {
+func (d fixedAnchorDecider) ValidateSummary(context.Context, json.RawMessage, json.RawMessage) (float64, error) {
 	return float64(d), nil
 }
 
@@ -89,7 +89,7 @@ func (d splitAnchorDecider) ShouldAnchor(context.Context, string) (float64, erro
 	return d.should, nil
 }
 
-func (d splitAnchorDecider) ValidateSummary(context.Context, string, string) (float64, error) {
+func (d splitAnchorDecider) ValidateSummary(context.Context, json.RawMessage, json.RawMessage) (float64, error) {
 	return d.faithful, nil
 }
 
