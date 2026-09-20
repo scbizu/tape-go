@@ -52,7 +52,7 @@ func AnchorFromEntry(e entry.EntryLike) (Candidate, bool) {
 		if err := json.Unmarshal([]byte(e.GetSummary()), &anchor); err != nil {
 			return Candidate{}, false
 		}
-		summary, seqS, seqE = anchor.Summary, anchor.SeqS, anchor.SeqE
+		summary, seqS, seqE = string(anchor.State), anchor.SeqS, anchor.SeqE
 	}
 	if seqS.Cmp(seqE) > 0 {
 		return Candidate{}, false

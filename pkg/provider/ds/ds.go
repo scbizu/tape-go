@@ -35,6 +35,16 @@ var _ llm.Summarizer = (*Model)(nil)
 
 var ErrEmbeddingUnsupported = errors.New("ds: embedding is not supported")
 
+type jevMemoryState struct {
+	Overview       string   `json:"overview"`
+	Facts          []string `json:"facts"`
+	Decisions      []string `json:"decisions"`
+	Constraints    []string `json:"constraints"`
+	Preferences    []string `json:"preferences"`
+	Results        []string `json:"results"`
+	UnresolvedWork []string `json:"unresolved_work"`
+}
+
 func NewModel(apiKey, modelName string, opts ...deepseek.Option) (*Model, error) {
 	if modelName == "" {
 		modelName = deepseek.DeepSeekV4Pro
@@ -109,14 +119,16 @@ func (m *Model) Summarize(ctx context.Context, state string) (string, error) {
 		Messages: []deepseek.ChatCompletionMessage{
 			{
 				Role: deepseek.ChatMessageRoleSystem,
-				Content: "Summarize the supplied tape view faithfully and compactly for future memory retrieval. " +
-					"Preserve concrete facts, decisions, constraints, preferences, results, and unresolved work. " +
-					"Do not infer or add information that is not present. Return only the summary.",
+				Content: "Summarize the supplied tape view faithfully and compactly as a JSON object for future Jev retrieval. " +
+					"Return exactly these fields: overview (string), facts, decisions, constraints, preferences, results, and unresolved_work (arrays of strings). " +
+					"Use empty arrays when a category has no content. Preserve concrete names and values. " +
+					"Do not infer or add information that is not present. Return JSON only.",
 			},
 			{Role: deepseek.ChatMessageRoleUser, Content: state},
 		},
-		Temperature: 0,
-		MaxTokens:   1024,
+		ResponseFormat: &deepseek.ResponseFormat{Type: "json_object"},
+		Temperature:    0,
+		MaxTokens:      1024,
 	})
 	if err != nil {
 		return "", fmt.Errorf("ds: summarize: %w", err)
@@ -128,7 +140,30 @@ func (m *Model) Summarize(ctx context.Context, state string) (string, error) {
 	if summary == "" {
 		return "", errors.New("ds: summarize empty content")
 	}
-	return summary, nil
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(summary), &fields); err != nil {
+		return "", fmt.Errorf("ds: summarize invalid JSON object: %w", err)
+	}
+	if fields == nil {
+		return "", errors.New("ds: summarize response is not a JSON object")
+	}
+	for _, name := range []string{"overview", "facts", "decisions", "constraints", "preferences", "results", "unresolved_work"} {
+		if _, ok := fields[name]; !ok {
+			return "", fmt.Errorf("ds: summarize response missing field %q", name)
+		}
+	}
+	var memory jevMemoryState
+	if err := json.Unmarshal([]byte(summary), &memory); err != nil {
+		return "", fmt.Errorf("ds: summarize invalid memory state: %w", err)
+	}
+	if strings.TrimSpace(memory.Overview) == "" && len(memory.Facts)+len(memory.Decisions)+len(memory.Constraints)+len(memory.Preferences)+len(memory.Results)+len(memory.UnresolvedWork) == 0 {
+		return "", errors.New("ds: summarize returned empty memory state")
+	}
+	compact, err := json.Marshal(memory)
+	if err != nil {
+		return "", fmt.Errorf("ds: encode summary state: %w", err)
+	}
+	return string(compact), nil
 }
 
 func (m *Model) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {

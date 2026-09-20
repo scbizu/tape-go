@@ -101,8 +101,8 @@ func NewClient(apiKey string, opts ...Option) (*Client, error) {
 }
 
 type candidateState struct {
-	ID   string `json:"id"`
-	Text string `json:"text"`
+	ID    string `json:"id"`
+	State any    `json:"state"`
 }
 
 type question struct {
@@ -154,11 +154,11 @@ func (c *Client) ShouldAnchor(ctx context.Context, summary string) (float64, err
 		return 0, errors.New("jev: empty anchor state")
 	}
 	payload := struct {
-		State     string                  `json:"state"`
+		State     any                     `json:"state"`
 		Model     string                  `json:"model"`
 		Questions map[string]noulQuestion `json:"questions"`
 	}{
-		State: summary,
+		State: stateValue(summary),
 		Model: c.model,
 		Questions: map[string]noulQuestion{
 			"should_anchor": {
@@ -202,11 +202,14 @@ func (c *Client) ValidateSummary(ctx context.Context, state, summary string) (fl
 		return 0, errors.New("jev: summary validation requires state and summary")
 	}
 	payload := struct {
-		State     map[string]string       `json:"state"`
+		State     map[string]any          `json:"state"`
 		Model     string                  `json:"model"`
 		Questions map[string]noulQuestion `json:"questions"`
 	}{
-		State: map[string]string{"source_view": state, "proposed_summary": summary},
+		State: map[string]any{
+			"source_view":      stateValue(state),
+			"proposed_summary": stateValue(summary),
+		},
 		Model: c.model,
 		Questions: map[string]noulQuestion{
 			"is_faithful": {
@@ -257,7 +260,7 @@ func (c *Client) Classify(ctx context.Context, query string, candidates []string
 	payload.State.Query = query
 	for i, candidate := range candidates {
 		id := candidateID(i)
-		payload.State.Candidates = append(payload.State.Candidates, candidateState{ID: id, Text: candidate})
+		payload.State.Candidates = append(payload.State.Candidates, candidateState{ID: id, State: stateValue(candidate)})
 		payload.Questions[id] = question{
 			Type:         "score",
 			Instructions: fmt.Sprintf("How relevant is candidate %s to the search query? Judge whether it helps answer or recover the requested earlier context.", id),
@@ -297,6 +300,18 @@ func (c *Client) Classify(ctx context.Context, query string, candidates []string
 		results = append(results, finder.Classification{Index: i, Score: answer.Score, Confidence: answer.Confidence})
 	}
 	return results, nil
+}
+
+func stateValue(state string) any {
+	trimmed := strings.TrimSpace(state)
+	var structured any
+	if err := json.Unmarshal([]byte(trimmed), &structured); err == nil {
+		switch structured.(type) {
+		case map[string]any, []any:
+			return structured
+		}
+	}
+	return state
 }
 
 func (c *Client) post(ctx context.Context, body []byte, target any) error {

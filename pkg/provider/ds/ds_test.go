@@ -2,6 +2,7 @@ package ds
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"testing"
@@ -148,18 +149,47 @@ func TestModelEmbeddingUnsupported(t *testing.T) {
 
 func TestModelSummarize(t *testing.T) {
 	client := &fakeClient{response: &deepseek.ChatCompletionResponse{
-		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: "  concise memory  "}}},
+		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: `{
+			"overview":"concise memory",
+			"facts":["database region is Tokyo"],
+			"decisions":[],"constraints":[],"preferences":[],"results":[],"unresolved_work":[]
+		}`}}},
 	}}
 	llm := &Model{client: client, name: "deepseek-test"}
 	got, err := llm.Summarize(context.Background(), `{"entries":[{"summary":"fact"}]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "concise memory" {
-		t.Fatalf("Summarize = %q", got)
+	var summary map[string]any
+	if err := json.Unmarshal([]byte(got), &summary); err != nil {
+		t.Fatalf("Summarize returned invalid JSON %q: %v", got, err)
 	}
-	if client.request == nil || len(client.request.Messages) != 2 || client.request.Temperature != 0 {
+	if summary["overview"] != "concise memory" {
+		t.Fatalf("Summarize = %#v", summary)
+	}
+	if client.request == nil || len(client.request.Messages) != 2 || client.request.Temperature != 0 ||
+		client.request.ResponseFormat == nil || client.request.ResponseFormat.Type != "json_object" {
 		t.Fatalf("unexpected request: %#v", client.request)
+	}
+}
+
+func TestModelSummarizeRejectsInvalidJSON(t *testing.T) {
+	client := &fakeClient{response: &deepseek.ChatCompletionResponse{
+		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: "plain text"}}},
+	}}
+	llm := &Model{client: client, name: "deepseek-test"}
+	if _, err := llm.Summarize(context.Background(), `{"entries":[]}`); err == nil {
+		t.Fatal("Summarize accepted non-JSON content")
+	}
+}
+
+func TestModelSummarizeRejectsIncompleteState(t *testing.T) {
+	client := &fakeClient{response: &deepseek.ChatCompletionResponse{
+		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: `{"overview":"missing categories"}`}}},
+	}}
+	llm := &Model{client: client, name: "deepseek-test"}
+	if _, err := llm.Summarize(context.Background(), `{"entries":[]}`); err == nil {
+		t.Fatal("Summarize accepted incomplete Jev memory state")
 	}
 }
 

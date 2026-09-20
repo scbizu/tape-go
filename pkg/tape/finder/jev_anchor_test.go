@@ -3,6 +3,7 @@ package finder
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
@@ -28,7 +29,8 @@ func (s fixedSummarizer) Summarize(context.Context, string) (string, error) {
 func TestJevAnchorPolicyCreatesJevAnchor(t *testing.T) {
 	t.Parallel()
 
-	policy := NewJevAnchorPolicy(fixedAnchorDecider(.9), fixedSummarizer("Database region: Tokyo."), .7)
+	memoryState := `{"overview":"Database region: Tokyo.","facts":["Production database region is Tokyo."],"decisions":[],"constraints":[],"preferences":[],"results":[],"unresolved_work":[]}`
+	policy := NewJevAnchorPolicy(fixedAnchorDecider(.9), fixedSummarizer(memoryState), .7)
 	latest := entry.NewEntry(
 		entry.WithEntryID(entry.SeqFromUint64(4)),
 		entry.WithEntryKind(entry.EntryUser),
@@ -53,7 +55,7 @@ func TestJevAnchorPolicyCreatesJevAnchor(t *testing.T) {
 	if err := json.Unmarshal([]byte(anchor.GetSummary()), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Summary != "Database region: Tokyo." ||
+	if string(payload.State) != memoryState ||
 		payload.SeqS != entry.SeqFromUint64(4) ||
 		payload.SeqE != entry.SeqFromUint64(5) {
 		t.Fatalf("payload = %#v", payload)
@@ -97,7 +99,7 @@ func TestJevAnchorPolicyRejectsUnfaithfulSummary(t *testing.T) {
 	e := entry.NewEntry(entry.WithEntryContent("source fact"))
 	_, ok, err := NewJevAnchorPolicy(
 		splitAnchorDecider{should: .95, faithful: .2},
-		fixedSummarizer("unsupported claim"),
+		fixedSummarizer(`{"overview":"unsupported claim"}`),
 		.7,
 	).MakeAnchor(context.Background(), e, view.EntryView{
 		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
@@ -108,5 +110,25 @@ func TestJevAnchorPolicyRejectsUnfaithfulSummary(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("unfaithful summary became a Jev anchor")
+	}
+}
+
+func TestJevAnchorPolicyRejectsUnstructuredSummary(t *testing.T) {
+	t.Parallel()
+
+	e := entry.NewEntry(entry.WithEntryContent("source fact"))
+	_, ok, err := NewJevAnchorPolicy(
+		fixedAnchorDecider(.95),
+		fixedSummarizer("plain-text summary"),
+		.7,
+	).MakeAnchor(context.Background(), e, view.EntryView{
+		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
+		Raw:   []entry.EntryLike{e},
+	})
+	if err == nil || !strings.Contains(err.Error(), "valid JSON") {
+		t.Fatalf("error = %v, want structured Jev state error", err)
+	}
+	if ok {
+		t.Fatal("unstructured summary became a Jev anchor")
 	}
 }

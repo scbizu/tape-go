@@ -38,6 +38,10 @@ func TestClientClassify(t *testing.T) {
 		if request.Model != DefaultModel || request.State.Query != "database failure" || len(request.Questions) != 3 {
 			t.Fatalf("unexpected request: %#v", request)
 		}
+		memory, ok := request.State.Candidates[0].State.(map[string]any)
+		if !ok || memory["overview"] != "old memory" {
+			t.Fatalf("candidate JSON was not sent as structured state: %#v", request.State.Candidates[0].State)
+		}
 		return jsonResponse(http.StatusOK, `{
 			"model":"jev-1.13.0",
 			"answers":{
@@ -52,7 +56,9 @@ func TestClientClassify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := client.Classify(context.Background(), "database failure", []string{"old", "best", "related"})
+	got, err := client.Classify(context.Background(), "database failure", []string{
+		`{"overview":"old memory"}`, `{"overview":"best memory"}`, `{"overview":"related memory"}`,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,13 +102,15 @@ func TestClientValidateSummary(t *testing.T) {
 
 	httpClient := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		var request struct {
-			State     map[string]string       `json:"state"`
+			State     map[string]any          `json:"state"`
 			Questions map[string]noulQuestion `json:"questions"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		if request.State["source_view"] != "source" || request.State["proposed_summary"] != "summary" || request.Questions["is_faithful"].Type != "noul" {
+		source, sourceOK := request.State["source_view"].(map[string]any)
+		summary, summaryOK := request.State["proposed_summary"].(map[string]any)
+		if !sourceOK || source["entries"] == nil || !summaryOK || summary["overview"] != "summary" || request.Questions["is_faithful"].Type != "noul" {
 			t.Fatalf("unexpected request: %#v", request)
 		}
 		return jsonResponse(http.StatusOK, `{"answers":{"is_faithful":{"type":"noul","noul":0.96}}}`), nil
@@ -111,7 +119,7 @@ func TestClientValidateSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := client.ValidateSummary(context.Background(), "source", "summary")
+	got, err := client.ValidateSummary(context.Background(), `{"entries":["source"]}`, `{"overview":"summary"}`)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -65,12 +65,24 @@ type HandoffAnchor struct {
 // JevAnchor is a classifier-triggered memory checkpoint. Unlike a handoff
 // anchor, it does not change the active view and is only consumed by Jev search.
 type JevAnchor struct {
-	Summary    string
+	State      json.RawMessage
 	SeqS, SeqE Seq
 }
 
 // NewJevAnchor constructs an anchor:jev entry from its typed payload.
 func NewJevAnchor(seq Seq, owner string, anchor JevAnchor) (Entry, error) {
+	if len(anchor.State) == 0 || !json.Valid(anchor.State) {
+		return Entry{}, fmt.Errorf("entry: Jev anchor state must be valid JSON")
+	}
+	var state any
+	if err := json.Unmarshal(anchor.State, &state); err != nil {
+		return Entry{}, fmt.Errorf("entry: decode Jev anchor state: %w", err)
+	}
+	switch state.(type) {
+	case map[string]any, []any:
+	default:
+		return Entry{}, fmt.Errorf("entry: Jev anchor state must be a JSON object or array")
+	}
 	payload, err := json.Marshal(anchor)
 	if err != nil {
 		return Entry{}, fmt.Errorf("entry: encode Jev anchor: %w", err)

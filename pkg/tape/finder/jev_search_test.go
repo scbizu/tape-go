@@ -39,9 +39,9 @@ func TestAnchorKindsHaveSeparateSearchSemantics(t *testing.T) {
 		t.Fatal("handoff anchor became a Jev candidate")
 	}
 	jevPayload, err := json.Marshal(entry.JevAnchor{
-		Summary: "archived decision",
-		SeqS:    entry.SeqFromUint64(4),
-		SeqE:    entry.SeqFromUint64(9),
+		State: json.RawMessage(`{"overview":"archived decision"}`),
+		SeqS:  entry.SeqFromUint64(4),
+		SeqE:  entry.SeqFromUint64(9),
 	})
 	if err != nil {
 		t.Fatal(err)

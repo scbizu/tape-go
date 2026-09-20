@@ -85,9 +85,9 @@ func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike,
 		ownerID = memory.Owner
 	}
 	anchor, err := entry.NewJevAnchor(entry.Seq{}, ownerID, entry.JevAnchor{
-		Summary: summary,
-		SeqS:    memory.Scope.SeqS,
-		SeqE:    memory.Scope.SeqE,
+		State: json.RawMessage(summary),
+		SeqS:  memory.Scope.SeqS,
+		SeqE:  memory.Scope.SeqE,
 	})
 	if err != nil {
 		return nil, false, err
