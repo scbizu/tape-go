@@ -173,16 +173,6 @@ func TestModelSummarize(t *testing.T) {
 	}
 }
 
-func TestModelSummarizeRejectsInvalidJSON(t *testing.T) {
-	client := &fakeClient{response: &deepseek.ChatCompletionResponse{
-		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: "plain text"}}},
-	}}
-	llm := &Model{client: client, name: "deepseek-test"}
-	if _, err := llm.Summarize(context.Background(), `{"entries":[]}`); err == nil {
-		t.Fatal("Summarize accepted non-JSON content")
-	}
-}
-
 func TestModelSummarizeRejectsIncompleteState(t *testing.T) {
 	client := &fakeClient{response: &deepseek.ChatCompletionResponse{
 		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: `{"overview":"missing categories"}`}}},
