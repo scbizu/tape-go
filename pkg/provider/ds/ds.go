@@ -17,7 +17,6 @@ import (
 	"github.com/scbizu/tape-go/pkg/llm"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/finder"
-	"github.com/scbizu/tape-go/pkg/tape/view"
 
 	"google.golang.org/adk/model"
 )
@@ -100,13 +99,13 @@ func (m *Model) ReRank(ctx context.Context, query string, candidates []string) (
 	return rerankByOrder(candidates, resp.Choices[0].Message.Content)
 }
 
-func (m *Model) Summarize(ctx context.Context, memoryView view.EntryView) (entry.JevMemoryState, error) {
-	state, err := finder.JevViewState(memoryView)
-	if err != nil {
-		return entry.JevMemoryState{}, fmt.Errorf("ds: build summary state: %w", err)
-	}
+func (m *Model) Summarize(ctx context.Context, projection finder.JevViewProjection) (entry.JevMemoryState, error) {
 	if !m.IsEnable() {
 		return entry.JevMemoryState{}, errors.New("ds: model is not enabled")
+	}
+	state, err := json.Marshal(projection)
+	if err != nil {
+		return entry.JevMemoryState{}, fmt.Errorf("ds: encode view projection: %w", err)
 	}
 	resp, err := m.client.CreateChatCompletion(ctx, &deepseek.ChatCompletionRequest{
 		Model: m.name,

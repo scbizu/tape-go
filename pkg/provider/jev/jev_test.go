@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
+	"github.com/scbizu/tape-go/pkg/tape/finder"
+	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -73,14 +75,15 @@ func TestClientShouldAnchor(t *testing.T) {
 
 	httpClient := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		var request struct {
-			State     string                  `json:"state"`
-			Questions map[string]noulQuestion `json:"questions"`
+			State     finder.JevViewProjection `json:"state"`
+			Questions map[string]noulQuestion  `json:"questions"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
 		question := request.Questions["should_anchor"]
-		if request.State != "durable fact" || question.Type != "noul" || question.Criteria["true"] == "" {
+		if len(request.State.Entries) != 2 || request.State.Entries[0].Summary != "earlier fact" || request.State.Entries[1].Summary != "durable fact" ||
+			question.Type != "noul" || question.Criteria["true"] == "" {
 			t.Fatalf("unexpected request: %#v", request)
 		}
 		return jsonResponse(http.StatusOK, `{"answers":{"should_anchor":{"type":"noul","noul":0.91}}}`), nil
@@ -89,7 +92,14 @@ func TestClientShouldAnchor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := client.ShouldAnchor(context.Background(), "durable fact")
+	projection := finder.JevViewProjection{
+		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(3)},
+		Entries: []finder.JevViewEntry{
+			{Seq: entry.SeqFromUint64(1), Kind: entry.EntryUser, Summary: "earlier fact"},
+			{Seq: entry.SeqFromUint64(2), Kind: entry.EntryAssistant, Summary: "durable fact"},
+		},
+	}
+	got, err := client.ShouldAnchor(context.Background(), projection)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,15 +113,16 @@ func TestClientValidateSummary(t *testing.T) {
 
 	httpClient := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		var request struct {
-			State     map[string]any          `json:"state"`
+			State struct {
+				SourceView      finder.JevViewProjection `json:"source_view"`
+				ProposedSummary entry.JevMemoryState     `json:"proposed_summary"`
+			} `json:"state"`
 			Questions map[string]noulQuestion `json:"questions"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		source, sourceOK := request.State["source_view"].(map[string]any)
-		summary, summaryOK := request.State["proposed_summary"].(map[string]any)
-		if !sourceOK || source["entries"] == nil || !summaryOK || summary["overview"] != "summary" || request.Questions["is_faithful"].Type != "noul" {
+		if len(request.State.SourceView.Entries) != 1 || request.State.ProposedSummary.Overview != "summary" || request.Questions["is_faithful"].Type != "noul" {
 			t.Fatalf("unexpected request: %#v", request)
 		}
 		return jsonResponse(http.StatusOK, `{"answers":{"is_faithful":{"type":"noul","noul":0.96}}}`), nil
@@ -120,11 +131,11 @@ func TestClientValidateSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := client.ValidateSummary(
-		context.Background(),
-		json.RawMessage(`{"entries":["source"]}`),
-		entry.JevMemoryState{Overview: "summary"},
-	)
+	projection := finder.JevViewProjection{
+		Scope:   view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
+		Entries: []finder.JevViewEntry{{Seq: entry.SeqFromUint64(1), Kind: entry.EntryUser, Summary: "source"}},
+	}
+	got, err := client.ValidateSummary(context.Background(), projection, entry.JevMemoryState{Overview: "summary"})
 	if err != nil {
 		t.Fatal(err)
 	}

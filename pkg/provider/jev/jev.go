@@ -147,19 +147,19 @@ type anchorResponse struct {
 
 // ShouldAnchor asks Jev whether one entry contains durable information worth
 // exposing as a future memory-search candidate.
-func (c *Client) ShouldAnchor(ctx context.Context, summary string) (float64, error) {
+func (c *Client) ShouldAnchor(ctx context.Context, projection finder.JevViewProjection) (float64, error) {
 	if c == nil || c.httpClient == nil {
 		return 0, errors.New("jev: client is not enabled")
 	}
-	if strings.TrimSpace(summary) == "" {
-		return 0, errors.New("jev: empty anchor state")
+	if len(projection.Entries) == 0 {
+		return 0, errors.New("jev: empty anchor view projection")
 	}
 	payload := struct {
-		State     string                  `json:"state"`
-		Model     string                  `json:"model"`
-		Questions map[string]noulQuestion `json:"questions"`
+		State     finder.JevViewProjection `json:"state"`
+		Model     string                   `json:"model"`
+		Questions map[string]noulQuestion  `json:"questions"`
 	}{
-		State: summary,
+		State: projection,
 		Model: c.model,
 		Questions: map[string]noulQuestion{
 			"should_anchor": {
@@ -195,17 +195,17 @@ func (c *Client) ShouldAnchor(ctx context.Context, summary string) (float64, err
 
 // ValidateSummary asks Jev whether a generated summary is fully supported by
 // its source view and preserves the durable information needed for retrieval.
-func (c *Client) ValidateSummary(ctx context.Context, state json.RawMessage, summary entry.JevMemoryState) (float64, error) {
+func (c *Client) ValidateSummary(ctx context.Context, projection finder.JevViewProjection, summary entry.JevMemoryState) (float64, error) {
 	if c == nil || c.httpClient == nil {
 		return 0, errors.New("jev: client is not enabled")
 	}
-	if !isStructuredState(state) || summary.IsZero() {
+	if len(projection.Entries) == 0 || summary.IsZero() {
 		return 0, errors.New("jev: summary validation requires state and summary")
 	}
 	payload := struct {
 		State struct {
-			SourceView      json.RawMessage      `json:"source_view"`
-			ProposedSummary entry.JevMemoryState `json:"proposed_summary"`
+			SourceView      finder.JevViewProjection `json:"source_view"`
+			ProposedSummary entry.JevMemoryState     `json:"proposed_summary"`
 		} `json:"state"`
 		Model     string                  `json:"model"`
 		Questions map[string]noulQuestion `json:"questions"`
@@ -222,7 +222,7 @@ func (c *Client) ValidateSummary(ctx context.Context, state json.RawMessage, sum
 			},
 		},
 	}
-	payload.State.SourceView = state
+	payload.State.SourceView = projection
 	payload.State.ProposedSummary = summary
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -305,19 +305,6 @@ func (c *Client) Classify(ctx context.Context, query string, candidates []entry.
 		results = append(results, finder.Classification{Index: i, Score: answer.Score, Confidence: answer.Confidence})
 	}
 	return results, nil
-}
-
-func isStructuredState(state json.RawMessage) bool {
-	var structured any
-	if len(state) == 0 || json.Unmarshal(state, &structured) != nil {
-		return false
-	}
-	switch structured.(type) {
-	case map[string]any, []any:
-		return true
-	default:
-		return false
-	}
 }
 
 func (c *Client) post(ctx context.Context, body []byte, target any) error {

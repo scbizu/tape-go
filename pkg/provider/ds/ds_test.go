@@ -10,6 +10,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
+	"github.com/scbizu/tape-go/pkg/tape/finder"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 
 	"google.golang.org/adk/model"
@@ -162,7 +163,11 @@ func TestModelSummarize(t *testing.T) {
 		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
 		Raw:   []entry.EntryLike{entry.NewEntry(entry.WithEntryContent("fact"))},
 	}
-	got, err := llm.Summarize(context.Background(), memory)
+	projection, err := finder.ProjectJevView(memory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := llm.Summarize(context.Background(), projection)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +186,11 @@ func TestModelSummarizeRejectsIncompleteState(t *testing.T) {
 	}}
 	llm := &Model{client: client, name: "deepseek-test"}
 	memory := view.EntryView{Raw: []entry.EntryLike{entry.NewEntry(entry.WithEntryContent("fact"))}}
-	if _, err := llm.Summarize(context.Background(), memory); err == nil {
+	projection, err := finder.ProjectJevView(memory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := llm.Summarize(context.Background(), projection); err == nil {
 		t.Fatal("Summarize accepted incomplete Jev memory state")
 	}
 }

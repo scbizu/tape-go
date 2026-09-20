@@ -2,26 +2,38 @@ package finder
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"strings"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
-// JevAnchorDecider returns the probability that a summary should trigger a
-// durable Jev memory checkpoint.
+// JevViewEntry is the non-derived entry representation exposed to Jev.
+type JevViewEntry struct {
+	Seq     entry.Seq       `json:"seq"`
+	Kind    entry.EntryKind `json:"kind"`
+	Summary string          `json:"summary"`
+}
+
+// JevViewProjection is the stable projection shared by anchor decision,
+// summarization, and faithfulness validation.
+type JevViewProjection struct {
+	Scope   view.EntryRange `json:"scope"`
+	Entries []JevViewEntry  `json:"entries"`
+}
+
+// JevAnchorDecider returns the probability that a complete view projection
+// should trigger a durable Jev memory checkpoint.
 type JevAnchorDecider interface {
-	ShouldAnchor(context.Context, string) (float64, error)
-	ValidateSummary(context.Context, json.RawMessage, entry.JevMemoryState) (float64, error)
+	ShouldAnchor(context.Context, JevViewProjection) (float64, error)
+	ValidateSummary(context.Context, JevViewProjection, entry.JevMemoryState) (float64, error)
 }
 
 // JevSummarizer summarizes one assembled tape view into Jev's structured
 // memory state. The view retains its range and entries until the provider
 // boundary instead of being flattened into an untyped string.
 type JevSummarizer interface {
-	Summarize(context.Context, view.EntryView) (entry.JevMemoryState, error)
+	Summarize(context.Context, JevViewProjection) (entry.JevMemoryState, error)
 }
 
 // JevAnchorPolicy lets Jev decide when to checkpoint, then delegates the
@@ -49,11 +61,11 @@ func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike,
 	if latest == nil || latest.GetKind().IsAnchor() {
 		return nil, false, nil
 	}
-	latestSummary := strings.TrimSpace(latest.GetSummary())
-	if latestSummary == "" {
-		return nil, false, nil
+	projection, err := ProjectJevView(memory)
+	if err != nil {
+		return nil, false, err
 	}
-	probability, err := p.Decider.ShouldAnchor(ctx, latestSummary)
+	probability, err := p.Decider.ShouldAnchor(ctx, projection)
 	if err != nil {
 		return nil, false, err
 	}
@@ -64,18 +76,14 @@ func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike,
 		return nil, false, nil
 	}
 
-	summary, err := p.Summarizer.Summarize(ctx, memory)
+	summary, err := p.Summarizer.Summarize(ctx, projection)
 	if err != nil {
 		return nil, false, err
 	}
 	if summary.IsZero() {
 		return nil, false, errors.New("finder: Jev anchor summarizer returned empty memory state")
 	}
-	state, err := JevViewState(memory)
-	if err != nil {
-		return nil, false, err
-	}
-	faithfulness, err := p.Decider.ValidateSummary(ctx, state, summary)
+	faithfulness, err := p.Decider.ValidateSummary(ctx, projection, summary)
 	if err != nil {
 		return nil, false, err
 	}
@@ -100,33 +108,24 @@ func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike,
 	return anchor, true, nil
 }
 
-// JevViewState builds the source state seen by both the summarizer and Jev's
+// ProjectJevView builds the source state seen by both the summarizer and Jev's
 // faithfulness check. Anchors are excluded to avoid recursively summarizing
 // derived memories.
-func JevViewState(memory view.EntryView) (json.RawMessage, error) {
-	type summaryEntry struct {
-		Seq     entry.Seq       `json:"seq"`
-		Kind    entry.EntryKind `json:"kind"`
-		Summary string          `json:"summary"`
+func ProjectJevView(memory view.EntryView) (JevViewProjection, error) {
+	projection := JevViewProjection{
+		Scope:   memory.Scope,
+		Entries: make([]JevViewEntry, 0, len(memory.Raw)),
 	}
-	state := struct {
-		Scope   view.EntryRange `json:"scope"`
-		Entries []summaryEntry  `json:"entries"`
-	}{Scope: memory.Scope, Entries: make([]summaryEntry, 0, len(memory.Raw))}
 	for _, e := range memory.Raw {
 		if e == nil || e.GetKind().IsAnchor() {
 			continue
 		}
-		state.Entries = append(state.Entries, summaryEntry{
+		projection.Entries = append(projection.Entries, JevViewEntry{
 			Seq: e.GetID(), Kind: e.GetKind(), Summary: e.GetSummary(),
 		})
 	}
-	if len(state.Entries) == 0 {
-		return nil, errors.New("finder: empty Jev summary view")
+	if len(projection.Entries) == 0 {
+		return JevViewProjection{}, errors.New("finder: empty Jev view projection")
 	}
-	data, err := json.Marshal(state)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
+	return projection, nil
 }

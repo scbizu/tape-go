@@ -11,18 +11,61 @@ import (
 
 type fixedAnchorDecider float64
 
-func (d fixedAnchorDecider) ShouldAnchor(context.Context, string) (float64, error) {
+func (d fixedAnchorDecider) ShouldAnchor(context.Context, JevViewProjection) (float64, error) {
 	return float64(d), nil
 }
 
-func (d fixedAnchorDecider) ValidateSummary(context.Context, json.RawMessage, entry.JevMemoryState) (float64, error) {
+func (d fixedAnchorDecider) ValidateSummary(context.Context, JevViewProjection, entry.JevMemoryState) (float64, error) {
 	return float64(d), nil
 }
 
 type fixedSummarizer entry.JevMemoryState
 
-func (s fixedSummarizer) Summarize(context.Context, view.EntryView) (entry.JevMemoryState, error) {
+func (s fixedSummarizer) Summarize(context.Context, JevViewProjection) (entry.JevMemoryState, error) {
 	return entry.JevMemoryState(s), nil
+}
+
+type recordingAnchorDecider struct {
+	projection JevViewProjection
+}
+
+func (d *recordingAnchorDecider) ShouldAnchor(_ context.Context, projection JevViewProjection) (float64, error) {
+	d.projection = projection
+	return .9, nil
+}
+
+func (*recordingAnchorDecider) ValidateSummary(context.Context, JevViewProjection, entry.JevMemoryState) (float64, error) {
+	return .9, nil
+}
+
+func TestJevAnchorPolicyDecidesFromWholeView(t *testing.T) {
+	t.Parallel()
+
+	first := entry.NewEntry(
+		entry.WithEntryID(entry.SeqFromUint64(4)),
+		entry.WithEntryContent("earlier durable fact"),
+	)
+	latest := entry.NewEntry(
+		entry.WithEntryID(entry.SeqFromUint64(5)),
+		entry.WithEntryContent("acknowledged"),
+	)
+	decider := &recordingAnchorDecider{}
+	_, ok, err := NewJevAnchorPolicy(
+		decider,
+		fixedSummarizer{Overview: "earlier durable fact"},
+		.7,
+	).MakeAnchor(context.Background(), latest, view.EntryView{
+		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(4), SeqE: entry.SeqFromUint64(6)},
+		Raw:   []entry.EntryLike{first, latest},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || len(decider.projection.Entries) != 2 ||
+		decider.projection.Entries[0].Summary != "earlier durable fact" ||
+		decider.projection.Entries[1].Summary != "acknowledged" {
+		t.Fatalf("decision projection = %#v, ok = %v", decider.projection, ok)
+	}
 }
 
 func TestJevAnchorPolicyCreatesJevAnchor(t *testing.T) {
@@ -87,11 +130,11 @@ type splitAnchorDecider struct {
 	should, faithful float64
 }
 
-func (d splitAnchorDecider) ShouldAnchor(context.Context, string) (float64, error) {
+func (d splitAnchorDecider) ShouldAnchor(context.Context, JevViewProjection) (float64, error) {
 	return d.should, nil
 }
 
-func (d splitAnchorDecider) ValidateSummary(context.Context, json.RawMessage, entry.JevMemoryState) (float64, error) {
+func (d splitAnchorDecider) ValidateSummary(context.Context, JevViewProjection, entry.JevMemoryState) (float64, error) {
 	return d.faithful, nil
 }
 
