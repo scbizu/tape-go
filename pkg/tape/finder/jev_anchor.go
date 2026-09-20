@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 
-	"github.com/scbizu/tape-go/pkg/llm"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
@@ -19,15 +17,22 @@ type JevAnchorDecider interface {
 	ValidateSummary(context.Context, json.RawMessage, entry.JevMemoryState) (float64, error)
 }
 
+// JevSummarizer summarizes one assembled tape view into Jev's structured
+// memory state. The view retains its range and entries until the provider
+// boundary instead of being flattened into an untyped string.
+type JevSummarizer interface {
+	Summarize(context.Context, view.EntryView) (entry.JevMemoryState, error)
+}
+
 // JevAnchorPolicy lets Jev decide when to checkpoint, then delegates the
 // bounded active-view summary to an LLM provider.
 type JevAnchorPolicy struct {
 	Decider    JevAnchorDecider
-	Summarizer llm.Summarizer
+	Summarizer JevSummarizer
 	Threshold  float64
 }
 
-func NewJevAnchorPolicy(decider JevAnchorDecider, summarizer llm.Summarizer, threshold float64) JevAnchorPolicy {
+func NewJevAnchorPolicy(decider JevAnchorDecider, summarizer JevSummarizer, threshold float64) JevAnchorPolicy {
 	return JevAnchorPolicy{Decider: decider, Summarizer: summarizer, Threshold: threshold}
 }
 
@@ -59,24 +64,16 @@ func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike,
 		return nil, false, nil
 	}
 
-	state, err := summaryState(memory)
+	summary, err := p.Summarizer.Summarize(ctx, memory)
 	if err != nil {
 		return nil, false, err
-	}
-	summaryText, err := p.Summarizer.Summarize(ctx, string(state))
-	if err != nil {
-		return nil, false, err
-	}
-	summaryText = strings.TrimSpace(summaryText)
-	if summaryText == "" {
-		return nil, false, errors.New("finder: Jev anchor summarizer returned empty summary")
-	}
-	var summary entry.JevMemoryState
-	if err := json.Unmarshal([]byte(summaryText), &summary); err != nil {
-		return nil, false, fmt.Errorf("finder: decode Jev memory state: %w", err)
 	}
 	if summary.IsZero() {
 		return nil, false, errors.New("finder: Jev anchor summarizer returned empty memory state")
+	}
+	state, err := JevViewState(memory)
+	if err != nil {
+		return nil, false, err
 	}
 	faithfulness, err := p.Decider.ValidateSummary(ctx, state, summary)
 	if err != nil {
@@ -103,15 +100,19 @@ func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike,
 	return anchor, true, nil
 }
 
-func summaryState(memory view.EntryView) (json.RawMessage, error) {
+// JevViewState builds the source state seen by both the summarizer and Jev's
+// faithfulness check. Anchors are excluded to avoid recursively summarizing
+// derived memories.
+func JevViewState(memory view.EntryView) (json.RawMessage, error) {
 	type summaryEntry struct {
 		Seq     entry.Seq       `json:"seq"`
 		Kind    entry.EntryKind `json:"kind"`
 		Summary string          `json:"summary"`
 	}
 	state := struct {
-		Entries []summaryEntry `json:"entries"`
-	}{Entries: make([]summaryEntry, 0, len(memory.Raw))}
+		Scope   view.EntryRange `json:"scope"`
+		Entries []summaryEntry  `json:"entries"`
+	}{Scope: memory.Scope, Entries: make([]summaryEntry, 0, len(memory.Raw))}
 	for _, e := range memory.Raw {
 		if e == nil || e.GetKind().IsAnchor() {
 			continue

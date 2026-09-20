@@ -3,7 +3,6 @@ package finder
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
@@ -20,17 +19,20 @@ func (d fixedAnchorDecider) ValidateSummary(context.Context, json.RawMessage, en
 	return float64(d), nil
 }
 
-type fixedSummarizer string
+type fixedSummarizer entry.JevMemoryState
 
-func (s fixedSummarizer) Summarize(context.Context, string) (string, error) {
-	return string(s), nil
+func (s fixedSummarizer) Summarize(context.Context, view.EntryView) (entry.JevMemoryState, error) {
+	return entry.JevMemoryState(s), nil
 }
 
 func TestJevAnchorPolicyCreatesJevAnchor(t *testing.T) {
 	t.Parallel()
 
-	memoryState := `{"overview":"Database region: Tokyo.","facts":["Production database region is Tokyo."],"decisions":[],"constraints":[],"preferences":[],"results":[],"unresolved_work":[]}`
-	policy := NewJevAnchorPolicy(fixedAnchorDecider(.9), fixedSummarizer(memoryState), .7)
+	memoryState := fixedSummarizer{
+		Overview: "Database region: Tokyo.",
+		Facts:    []string{"Production database region is Tokyo."},
+	}
+	policy := NewJevAnchorPolicy(fixedAnchorDecider(.9), memoryState, .7)
 	latest := entry.NewEntry(
 		entry.WithEntryID(entry.SeqFromUint64(4)),
 		entry.WithEntryKind(entry.EntryUser),
@@ -65,7 +67,7 @@ func TestJevAnchorPolicyCreatesJevAnchor(t *testing.T) {
 func TestJevAnchorPolicyHonorsThreshold(t *testing.T) {
 	t.Parallel()
 
-	_, ok, err := NewJevAnchorPolicy(fixedAnchorDecider(.4), fixedSummarizer("unused"), .7).MakeAnchor(
+	_, ok, err := NewJevAnchorPolicy(fixedAnchorDecider(.4), fixedSummarizer{Overview: "unused"}, .7).MakeAnchor(
 		context.Background(),
 		entry.NewEntry(entry.WithEntryContent("transient")),
 		view.EntryView{
@@ -99,7 +101,7 @@ func TestJevAnchorPolicyRejectsUnfaithfulSummary(t *testing.T) {
 	e := entry.NewEntry(entry.WithEntryContent("source fact"))
 	_, ok, err := NewJevAnchorPolicy(
 		splitAnchorDecider{should: .95, faithful: .2},
-		fixedSummarizer(`{"overview":"unsupported claim"}`),
+		fixedSummarizer{Overview: "unsupported claim"},
 		.7,
 	).MakeAnchor(context.Background(), e, view.EntryView{
 		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
@@ -110,25 +112,5 @@ func TestJevAnchorPolicyRejectsUnfaithfulSummary(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("unfaithful summary became a Jev anchor")
-	}
-}
-
-func TestJevAnchorPolicyRejectsUnstructuredSummary(t *testing.T) {
-	t.Parallel()
-
-	e := entry.NewEntry(entry.WithEntryContent("source fact"))
-	_, ok, err := NewJevAnchorPolicy(
-		fixedAnchorDecider(.95),
-		fixedSummarizer("plain-text summary"),
-		.7,
-	).MakeAnchor(context.Background(), e, view.EntryView{
-		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
-		Raw:   []entry.EntryLike{e},
-	})
-	if err == nil || !strings.Contains(err.Error(), "decode Jev memory state") {
-		t.Fatalf("error = %v, want structured Jev state error", err)
-	}
-	if ok {
-		t.Fatal("unstructured summary became a Jev anchor")
 	}
 }

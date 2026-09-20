@@ -16,6 +16,8 @@ import (
 
 	"github.com/scbizu/tape-go/pkg/llm"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
+	"github.com/scbizu/tape-go/pkg/tape/finder"
+	"github.com/scbizu/tape-go/pkg/tape/view"
 
 	"google.golang.org/adk/model"
 )
@@ -32,7 +34,7 @@ type Model struct {
 
 var _ model.LLM = (*Model)(nil)
 var _ llm.Model = (*Model)(nil)
-var _ llm.Summarizer = (*Model)(nil)
+var _ finder.JevSummarizer = (*Model)(nil)
 
 var ErrEmbeddingUnsupported = errors.New("ds: embedding is not supported")
 
@@ -98,12 +100,13 @@ func (m *Model) ReRank(ctx context.Context, query string, candidates []string) (
 	return rerankByOrder(candidates, resp.Choices[0].Message.Content)
 }
 
-func (m *Model) Summarize(ctx context.Context, state string) (string, error) {
-	if strings.TrimSpace(state) == "" {
-		return "", errors.New("ds: empty summary state")
+func (m *Model) Summarize(ctx context.Context, memoryView view.EntryView) (entry.JevMemoryState, error) {
+	state, err := finder.JevViewState(memoryView)
+	if err != nil {
+		return entry.JevMemoryState{}, fmt.Errorf("ds: build summary state: %w", err)
 	}
 	if !m.IsEnable() {
-		return "", errors.New("ds: model is not enabled")
+		return entry.JevMemoryState{}, errors.New("ds: model is not enabled")
 	}
 	resp, err := m.client.CreateChatCompletion(ctx, &deepseek.ChatCompletionRequest{
 		Model: m.name,
@@ -115,46 +118,42 @@ func (m *Model) Summarize(ctx context.Context, state string) (string, error) {
 					"Use empty arrays when a category has no content. Preserve concrete names and values. " +
 					"Do not infer or add information that is not present. Return JSON only.",
 			},
-			{Role: deepseek.ChatMessageRoleUser, Content: state},
+			{Role: deepseek.ChatMessageRoleUser, Content: string(state)},
 		},
 		ResponseFormat: &deepseek.ResponseFormat{Type: "json_object"},
 		Temperature:    0,
 		MaxTokens:      1024,
 	})
 	if err != nil {
-		return "", fmt.Errorf("ds: summarize: %w", err)
+		return entry.JevMemoryState{}, fmt.Errorf("ds: summarize: %w", err)
 	}
 	if len(resp.Choices) == 0 {
-		return "", errors.New("ds: summarize empty response")
+		return entry.JevMemoryState{}, errors.New("ds: summarize empty response")
 	}
 	summary := strings.TrimSpace(resp.Choices[0].Message.Content)
 	if summary == "" {
-		return "", errors.New("ds: summarize empty content")
+		return entry.JevMemoryState{}, errors.New("ds: summarize empty content")
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(summary), &fields); err != nil {
-		return "", fmt.Errorf("ds: summarize invalid JSON object: %w", err)
+		return entry.JevMemoryState{}, fmt.Errorf("ds: summarize invalid JSON object: %w", err)
 	}
 	if fields == nil {
-		return "", errors.New("ds: summarize response is not a JSON object")
+		return entry.JevMemoryState{}, errors.New("ds: summarize response is not a JSON object")
 	}
 	for _, name := range []string{"overview", "facts", "decisions", "constraints", "preferences", "results", "unresolved_work"} {
 		if _, ok := fields[name]; !ok {
-			return "", fmt.Errorf("ds: summarize response missing field %q", name)
+			return entry.JevMemoryState{}, fmt.Errorf("ds: summarize response missing field %q", name)
 		}
 	}
 	var memory entry.JevMemoryState
 	if err := json.Unmarshal([]byte(summary), &memory); err != nil {
-		return "", fmt.Errorf("ds: summarize invalid memory state: %w", err)
+		return entry.JevMemoryState{}, fmt.Errorf("ds: summarize invalid memory state: %w", err)
 	}
 	if strings.TrimSpace(memory.Overview) == "" && len(memory.Facts)+len(memory.Decisions)+len(memory.Constraints)+len(memory.Preferences)+len(memory.Results)+len(memory.UnresolvedWork) == 0 {
-		return "", errors.New("ds: summarize returned empty memory state")
+		return entry.JevMemoryState{}, errors.New("ds: summarize returned empty memory state")
 	}
-	compact, err := json.Marshal(memory)
-	if err != nil {
-		return "", fmt.Errorf("ds: encode summary state: %w", err)
-	}
-	return string(compact), nil
+	return memory, nil
 }
 
 func (m *Model) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {

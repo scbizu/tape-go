@@ -2,13 +2,15 @@ package ds
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"testing"
 
 	deepseek "github.com/cohesion-org/deepseek-go"
 	"google.golang.org/genai"
+
+	"github.com/scbizu/tape-go/pkg/tape/entry"
+	"github.com/scbizu/tape-go/pkg/tape/view"
 
 	"google.golang.org/adk/model"
 )
@@ -156,16 +158,16 @@ func TestModelSummarize(t *testing.T) {
 		}`}}},
 	}}
 	llm := &Model{client: client, name: "deepseek-test"}
-	got, err := llm.Summarize(context.Background(), `{"entries":[{"summary":"fact"}]}`)
+	memory := view.EntryView{
+		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
+		Raw:   []entry.EntryLike{entry.NewEntry(entry.WithEntryContent("fact"))},
+	}
+	got, err := llm.Summarize(context.Background(), memory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var summary map[string]any
-	if err := json.Unmarshal([]byte(got), &summary); err != nil {
-		t.Fatalf("Summarize returned invalid JSON %q: %v", got, err)
-	}
-	if summary["overview"] != "concise memory" {
-		t.Fatalf("Summarize = %#v", summary)
+	if got.Overview != "concise memory" || len(got.Facts) != 1 || got.Facts[0] != "database region is Tokyo" {
+		t.Fatalf("Summarize = %#v", got)
 	}
 	if client.request == nil || len(client.request.Messages) != 2 || client.request.Temperature != 0 ||
 		client.request.ResponseFormat == nil || client.request.ResponseFormat.Type != "json_object" {
@@ -178,7 +180,8 @@ func TestModelSummarizeRejectsIncompleteState(t *testing.T) {
 		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: `{"overview":"missing categories"}`}}},
 	}}
 	llm := &Model{client: client, name: "deepseek-test"}
-	if _, err := llm.Summarize(context.Background(), `{"entries":[]}`); err == nil {
+	memory := view.EntryView{Raw: []entry.EntryLike{entry.NewEntry(entry.WithEntryContent("fact"))}}
+	if _, err := llm.Summarize(context.Background(), memory); err == nil {
 		t.Fatal("Summarize accepted incomplete Jev memory state")
 	}
 }
