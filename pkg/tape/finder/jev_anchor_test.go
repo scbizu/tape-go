@@ -15,26 +15,45 @@ func (d fixedAnchorDecider) ShouldAnchor(context.Context, string) (float64, erro
 	return float64(d), nil
 }
 
+func (d fixedAnchorDecider) ValidateSummary(context.Context, string, string) (float64, error) {
+	return float64(d), nil
+}
+
+type fixedSummarizer string
+
+func (s fixedSummarizer) Summarize(context.Context, string) (string, error) {
+	return string(s), nil
+}
+
 func TestJevAnchorPolicyCreatesJevAnchor(t *testing.T) {
 	t.Parallel()
 
-	policy := NewJevAnchorPolicy(fixedAnchorDecider(.9), .7)
-	anchor, ok, err := policy.Anchor(context.Background(), entry.NewEntry(
+	policy := NewJevAnchorPolicy(fixedAnchorDecider(.9), fixedSummarizer("Database region: Tokyo."), .7)
+	latest := entry.NewEntry(
+		entry.WithEntryID(entry.SeqFromUint64(4)),
 		entry.WithEntryKind(entry.EntryUser),
 		entry.WithEntryContent("Remember the production database is in Tokyo."),
 		entry.WithEntryOwner("owner-a"),
-	), view.EntryRange{SeqS: entry.SeqFromUint64(4), SeqE: entry.SeqFromUint64(5)})
+	)
+	anchor, ok, err := policy.MakeAnchor(context.Background(), entry.NewEntry(
+		entry.WithEntryContent(latest.GetSummary()),
+		entry.WithEntryOwner(latest.GetOwner()),
+	), view.EntryView{
+		Owner: "owner-a",
+		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(4), SeqE: entry.SeqFromUint64(5)},
+		Raw:   []entry.EntryLike{latest},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !ok || anchor.GetKind() != entry.EntryKind(entry.AnchorKindJev.String()) {
 		t.Fatalf("anchor = %#v, ok = %v", anchor, ok)
 	}
-	var payload entry.HandoffAnchor
+	var payload entry.JevAnchor
 	if err := json.Unmarshal([]byte(anchor.GetSummary()), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Summary != "Remember the production database is in Tokyo." ||
+	if payload.Summary != "Database region: Tokyo." ||
 		payload.SeqS != entry.SeqFromUint64(4) ||
 		payload.SeqE != entry.SeqFromUint64(5) {
 		t.Fatalf("payload = %#v", payload)
@@ -44,15 +63,50 @@ func TestJevAnchorPolicyCreatesJevAnchor(t *testing.T) {
 func TestJevAnchorPolicyHonorsThreshold(t *testing.T) {
 	t.Parallel()
 
-	_, ok, err := NewJevAnchorPolicy(fixedAnchorDecider(.4), .7).Anchor(
+	_, ok, err := NewJevAnchorPolicy(fixedAnchorDecider(.4), fixedSummarizer("unused"), .7).MakeAnchor(
 		context.Background(),
 		entry.NewEntry(entry.WithEntryContent("transient")),
-		view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
+		view.EntryView{
+			Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
+			Raw:   []entry.EntryLike{entry.NewEntry(entry.WithEntryContent("transient"))},
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ok {
 		t.Fatal("entry below threshold was anchored")
+	}
+}
+
+type splitAnchorDecider struct {
+	should, faithful float64
+}
+
+func (d splitAnchorDecider) ShouldAnchor(context.Context, string) (float64, error) {
+	return d.should, nil
+}
+
+func (d splitAnchorDecider) ValidateSummary(context.Context, string, string) (float64, error) {
+	return d.faithful, nil
+}
+
+func TestJevAnchorPolicyRejectsUnfaithfulSummary(t *testing.T) {
+	t.Parallel()
+
+	e := entry.NewEntry(entry.WithEntryContent("source fact"))
+	_, ok, err := NewJevAnchorPolicy(
+		splitAnchorDecider{should: .95, faithful: .2},
+		fixedSummarizer("unsupported claim"),
+		.7,
+	).MakeAnchor(context.Background(), e, view.EntryView{
+		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
+		Raw:   []entry.EntryLike{e},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("unfaithful summary became a Jev anchor")
 	}
 }

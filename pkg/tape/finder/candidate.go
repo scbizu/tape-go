@@ -38,16 +38,30 @@ func AnchorFromEntry(e entry.EntryLike) (Candidate, bool) {
 	default:
 		return Candidate{}, false
 	}
-	summary := e.GetSummary()
-	var anchor entry.HandoffAnchor
-	if err := json.Unmarshal([]byte(summary), &anchor); err != nil || anchor.SeqS.Cmp(anchor.SeqE) > 0 {
+	var summary string
+	var seqS, seqE entry.Seq
+	switch kind {
+	case entry.AnchorKindHandoff:
+		var anchor entry.HandoffAnchor
+		if err := json.Unmarshal([]byte(e.GetSummary()), &anchor); err != nil {
+			return Candidate{}, false
+		}
+		summary, seqS, seqE = anchor.Summary, anchor.SeqS, anchor.SeqE
+	case entry.AnchorKindJev:
+		var anchor entry.JevAnchor
+		if err := json.Unmarshal([]byte(e.GetSummary()), &anchor); err != nil {
+			return Candidate{}, false
+		}
+		summary, seqS, seqE = anchor.Summary, anchor.SeqS, anchor.SeqE
+	}
+	if seqS.Cmp(seqE) > 0 {
 		return Candidate{}, false
 	}
 	return Candidate{
 		Seq:     e.GetID(),
 		Kind:    kind,
-		Summary: anchor.Summary,
-		Scope:   view.EntryRange{SeqS: anchor.SeqS, SeqE: anchor.SeqE},
+		Summary: summary,
+		Scope:   view.EntryRange{SeqS: seqS, SeqE: seqE},
 	}, true
 }
 

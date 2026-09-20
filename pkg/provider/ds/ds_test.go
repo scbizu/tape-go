@@ -146,6 +146,23 @@ func TestModelEmbeddingUnsupported(t *testing.T) {
 	}
 }
 
+func TestModelSummarize(t *testing.T) {
+	client := &fakeClient{response: &deepseek.ChatCompletionResponse{
+		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: "  concise memory  "}}},
+	}}
+	llm := &Model{client: client, name: "deepseek-test"}
+	got, err := llm.Summarize(context.Background(), `{"entries":[{"summary":"fact"}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "concise memory" {
+		t.Fatalf("Summarize = %q", got)
+	}
+	if client.request == nil || len(client.request.Messages) != 2 || client.request.Temperature != 0 {
+		t.Fatalf("unexpected request: %#v", client.request)
+	}
+}
+
 func TestBuildRequestKeepsMatchedToolResponse(t *testing.T) {
 	req, err := buildRequest("deepseek-test", &model.LLMRequest{Contents: []*genai.Content{
 		{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{

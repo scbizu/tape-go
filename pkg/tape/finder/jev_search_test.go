@@ -38,7 +38,15 @@ func TestAnchorKindsHaveSeparateSearchSemantics(t *testing.T) {
 	if _, ok := CandidateFromAnchor(handoff); ok {
 		t.Fatal("handoff anchor became a Jev candidate")
 	}
-	jevAnchor := entry.NewAnchor(entry.SeqFromUint64(10), "owner-a", entry.AnchorKindJev, payload)
+	jevPayload, err := json.Marshal(entry.JevAnchor{
+		Summary: "archived decision",
+		SeqS:    entry.SeqFromUint64(4),
+		SeqE:    entry.SeqFromUint64(9),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jevAnchor := entry.NewAnchor(entry.SeqFromUint64(10), "owner-a", entry.AnchorKindJev, jevPayload)
 	if _, ok := CandidateFromAnchor(jevAnchor); !ok {
 		t.Fatal("Jev anchor was not a Jev candidate")
 	}

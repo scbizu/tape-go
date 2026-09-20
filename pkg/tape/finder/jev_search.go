@@ -79,7 +79,15 @@ func (j Jev) FindAll(ctx context.Context, tape storage.EntryStorage) ([]view.Ent
 	if j.Classifier == nil {
 		return nil, errors.New("finder: nil Jev classifier")
 	}
-	indexer, ok := tape.(CandidateIndexer)
+	indexedTape := tape
+	for {
+		unwrapper, ok := indexedTape.(interface{ Unwrap() storage.TapeStorage })
+		if !ok {
+			break
+		}
+		indexedTape = unwrapper.Unwrap()
+	}
+	indexer, ok := indexedTape.(CandidateIndexer)
 	if !ok {
 		return nil, errors.New("finder: candidate index is not supported")
 	}

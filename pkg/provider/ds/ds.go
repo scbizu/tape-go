@@ -31,6 +31,7 @@ type Model struct {
 
 var _ model.LLM = (*Model)(nil)
 var _ llm.Model = (*Model)(nil)
+var _ llm.Summarizer = (*Model)(nil)
 
 var ErrEmbeddingUnsupported = errors.New("ds: embedding is not supported")
 
@@ -94,6 +95,40 @@ func (m *Model) ReRank(ctx context.Context, query string, candidates []string) (
 		return nil, errors.New("ds: rerank empty response")
 	}
 	return rerankByOrder(candidates, resp.Choices[0].Message.Content)
+}
+
+func (m *Model) Summarize(ctx context.Context, state string) (string, error) {
+	if strings.TrimSpace(state) == "" {
+		return "", errors.New("ds: empty summary state")
+	}
+	if !m.IsEnable() {
+		return "", errors.New("ds: model is not enabled")
+	}
+	resp, err := m.client.CreateChatCompletion(ctx, &deepseek.ChatCompletionRequest{
+		Model: m.name,
+		Messages: []deepseek.ChatCompletionMessage{
+			{
+				Role: deepseek.ChatMessageRoleSystem,
+				Content: "Summarize the supplied tape view faithfully and compactly for future memory retrieval. " +
+					"Preserve concrete facts, decisions, constraints, preferences, results, and unresolved work. " +
+					"Do not infer or add information that is not present. Return only the summary.",
+			},
+			{Role: deepseek.ChatMessageRoleUser, Content: state},
+		},
+		Temperature: 0,
+		MaxTokens:   1024,
+	})
+	if err != nil {
+		return "", fmt.Errorf("ds: summarize: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return "", errors.New("ds: summarize empty response")
+	}
+	summary := strings.TrimSpace(resp.Choices[0].Message.Content)
+	if summary == "" {
+		return "", errors.New("ds: summarize empty content")
+	}
+	return summary, nil
 }
 
 func (m *Model) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {

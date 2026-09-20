@@ -297,7 +297,7 @@ func (a *TapeAdapter) activeEntries(ctx context.Context, tapeView view.TapeView,
 	if tapeView.Scope.SeqE.IsZero() {
 		return nil, nil
 	}
-	start := a.Tape.View.SeqS
+	start := a.Tape.View.Scope.SeqS
 	if start.IsZero() {
 		start = entry.SeqFromUint64(1)
 	}

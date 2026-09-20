@@ -91,6 +91,35 @@ func TestClientShouldAnchor(t *testing.T) {
 	}
 }
 
+func TestClientValidateSummary(t *testing.T) {
+	t.Parallel()
+
+	httpClient := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var request struct {
+			State     map[string]string       `json:"state"`
+			Questions map[string]noulQuestion `json:"questions"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.State["source_view"] != "source" || request.State["proposed_summary"] != "summary" || request.Questions["is_faithful"].Type != "noul" {
+			t.Fatalf("unexpected request: %#v", request)
+		}
+		return jsonResponse(http.StatusOK, `{"answers":{"is_faithful":{"type":"noul","noul":0.96}}}`), nil
+	})
+	client, err := NewClient("secret", WithHTTPClient(httpClient), WithMaxRetries(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.ValidateSummary(context.Background(), "source", "summary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != .96 {
+		t.Fatalf("ValidateSummary = %v", got)
+	}
+}
+
 func TestClientRetriesRateLimit(t *testing.T) {
 	t.Parallel()
 

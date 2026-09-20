@@ -90,32 +90,66 @@ func TestTapeCloseDelegatesToUnderlyingCloser(t *testing.T) {
 	}
 }
 
-type jevAnchorerFunc func(context.Context, entry.EntryLike, view.EntryRange) (entry.EntryLike, bool, error)
+type anchorMakerFunc func(context.Context, entry.EntryLike, view.EntryView) (entry.EntryLike, bool, error)
 
-func (f jevAnchorerFunc) Anchor(ctx context.Context, e entry.EntryLike, scope view.EntryRange) (entry.EntryLike, bool, error) {
-	return f(ctx, e, scope)
+func (f anchorMakerFunc) MakeAnchor(ctx context.Context, e entry.EntryLike, memory view.EntryView) (entry.EntryLike, bool, error) {
+	return f(ctx, e, memory)
+}
+
+func TestTapeSetViewPreservesAnchorMaker(t *testing.T) {
+	t.Parallel()
+
+	maker := anchorMakerFunc(func(context.Context, entry.EntryLike, view.EntryView) (entry.EntryLike, bool, error) {
+		return nil, false, nil
+	})
+	tape := &Tape{View: view.EntryView{AnchorMaker: maker}}
+	tape.SetView(view.EntryRange{SeqS: entry.SeqFromUint64(3)})
+
+	if tape.View.AnchorMaker == nil {
+		t.Fatal("SetView cleared the view's AnchorMaker")
+	}
+	if tape.View.Scope.SeqS != entry.SeqFromUint64(3) {
+		t.Fatalf("view start = %s, want 3", tape.View.Scope.SeqS)
+	}
+}
+
+func TestTapeStoreUsesStorageWithoutRunningAnchorMaker(t *testing.T) {
+	t.Parallel()
+
+	tape := newMemoryTape(t, "owner-a", "session-a")
+	called := false
+	tape.View.AnchorMaker = anchorMakerFunc(func(context.Context, entry.EntryLike, view.EntryView) (entry.EntryLike, bool, error) {
+		called = true
+		return nil, false, nil
+	})
+	ctx := owner.WithOwnerId(context.Background(), "owner-a")
+
+	if err := tape.Store(ctx, entry.NewEntry(entry.WithEntryContent("raw store"))); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("storage Store invoked the view's AnchorMaker")
+	}
 }
 
 func TestTapeJevAnchoringRunsAfterPrimaryStore(t *testing.T) {
 	t.Parallel()
 
 	tape := newMemoryTape(t, "owner-a", "session-a")
-	tape.JevAnchorer = jevAnchorerFunc(func(ctx context.Context, e entry.EntryLike, scope view.EntryRange) (entry.EntryLike, bool, error) {
-		stored, err := tape.Range(ctx, scope)
-		if err != nil {
-			return nil, false, err
+	tape.View.AnchorMaker = anchorMakerFunc(func(_ context.Context, e entry.EntryLike, memory view.EntryView) (entry.EntryLike, bool, error) {
+		if len(memory.Raw) != 1 || memory.Raw[0].GetSummary() != "durable" {
+			t.Fatalf("primary entry was not stored before Jev decision: %#v", memory.Raw)
 		}
-		if len(stored.Raw) != 1 || stored.Raw[0].GetSummary() != "durable" {
-			t.Fatalf("primary entry was not stored before Jev decision: %#v", stored.Raw)
-		}
-		payload, _ := json.Marshal(entry.HandoffAnchor{Summary: e.GetSummary(), SeqS: scope.SeqS, SeqE: scope.SeqE})
+		payload, _ := json.Marshal(entry.JevAnchor{Summary: e.GetSummary(), SeqS: memory.Scope.SeqS, SeqE: memory.Scope.SeqE})
 		return entry.NewAnchor(entry.Seq{}, e.GetOwner(), entry.AnchorKindJev, payload), true, nil
 	})
+	base := tape.TapeStorage
+	tape.TapeStorage = storage.NewAnchoringStorage(base, &tape.View, nil)
 	ctx := owner.WithOwnerId(context.Background(), "owner-a")
 	if err := tape.Store(ctx, entry.NewEntry(entry.WithEntryContent("durable"), entry.WithEntryOwner("owner-a"))); err != nil {
 		t.Fatal(err)
 	}
-	index := tape.TapeStorage.(interface {
+	index := base.(interface {
 		CandidateIndex(context.Context) ([]finder.Candidate, error)
 	})
 	candidates, err := index.CandidateIndex(ctx)
@@ -138,11 +172,15 @@ func TestTapeJevAnchorFailureIsFailOpen(t *testing.T) {
 
 	tape := newMemoryTape(t, "owner-a", "session-a")
 	want := errors.New("classifier unavailable")
-	tape.JevAnchorer = jevAnchorerFunc(func(context.Context, entry.EntryLike, view.EntryRange) (entry.EntryLike, bool, error) {
+	tape.View.AnchorMaker = anchorMakerFunc(func(context.Context, entry.EntryLike, view.EntryView) (entry.EntryLike, bool, error) {
 		return nil, false, want
 	})
 	var reported error
-	tape.OnJevAnchorError = func(err error) { reported = err }
+	tape.TapeStorage = storage.NewAnchoringStorage(
+		tape.TapeStorage,
+		&tape.View,
+		func(err error) { reported = err },
+	)
 	ctx := owner.WithOwnerId(context.Background(), "owner-a")
 	if err := tape.Store(ctx, entry.NewEntry(entry.WithEntryContent("committed"))); err != nil {
 		t.Fatal(err)

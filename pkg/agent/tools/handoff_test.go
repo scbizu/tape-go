@@ -28,8 +28,8 @@ func TestHandoffCommandDefault(t *testing.T) {
 	if anchor != (entry.HandoffAnchor{SeqS: toolSeq(1), SeqE: toolSeq(2)}) {
 		t.Fatalf("handoff anchor = %#v, want [1,2)", anchor)
 	}
-	if tape.View != (view.EntryRange{SeqS: toolSeq(3)}) {
-		t.Fatalf("tape view = %#v, want SeqS 3", tape.View)
+	if tape.View.Scope != (view.EntryRange{SeqS: toolSeq(3)}) {
+		t.Fatalf("tape view = %#v, want SeqS 3", tape.View.Scope)
 	}
 }
 

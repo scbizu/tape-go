@@ -22,6 +22,12 @@ type Model interface {
 	) ([]string, error)
 }
 
+// Summarizer produces a faithful compact representation of supplied state.
+// It is separate from Model because search-only providers need not generate text.
+type Summarizer interface {
+	Summarize(context.Context, string) (string, error)
+}
+
 type modelKey struct{}
 
 func WithModel(ctx context.Context, model Model) context.Context {

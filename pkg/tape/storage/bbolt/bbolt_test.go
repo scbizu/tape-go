@@ -50,7 +50,7 @@ func TestBboltCandidateIndex(t *testing.T) {
 	if err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent("ordinary"))); err != nil {
 		t.Fatal(err)
 	}
-	payload, err := json.Marshal(entry.HandoffAnchor{Summary: "searchable", SeqS: seq(1), SeqE: seq(2)})
+	payload, err := json.Marshal(entry.JevAnchor{Summary: "searchable", SeqS: seq(1), SeqE: seq(2)})
 	if err != nil {
 		t.Fatal(err)
 	}

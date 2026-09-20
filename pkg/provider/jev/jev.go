@@ -192,6 +192,54 @@ func (c *Client) ShouldAnchor(ctx context.Context, summary string) (float64, err
 	return answer.Noul, nil
 }
 
+// ValidateSummary asks Jev whether a generated summary is fully supported by
+// its source view and preserves the durable information needed for retrieval.
+func (c *Client) ValidateSummary(ctx context.Context, state, summary string) (float64, error) {
+	if c == nil || c.httpClient == nil {
+		return 0, errors.New("jev: client is not enabled")
+	}
+	if strings.TrimSpace(state) == "" || strings.TrimSpace(summary) == "" {
+		return 0, errors.New("jev: summary validation requires state and summary")
+	}
+	payload := struct {
+		State     map[string]string       `json:"state"`
+		Model     string                  `json:"model"`
+		Questions map[string]noulQuestion `json:"questions"`
+	}{
+		State: map[string]string{"source_view": state, "proposed_summary": summary},
+		Model: c.model,
+		Questions: map[string]noulQuestion{
+			"is_faithful": {
+				Type:         "noul",
+				Instructions: "Is the proposed summary faithful to the source view and free of unsupported claims or contradictions?",
+				Criteria: map[string]string{
+					"true":  "Every claim is supported by the source view and important durable information is preserved",
+					"false": "Adds unsupported information, contradicts the source, or materially misrepresents it",
+				},
+			},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return 0, fmt.Errorf("jev: encode summary validation: %w", err)
+	}
+	var response anchorResponse
+	if err := c.post(ctx, body, &response); err != nil {
+		return 0, err
+	}
+	answer, ok := response.Answers["is_faithful"]
+	if !ok {
+		return 0, errors.New("jev: response missing answer \"is_faithful\"")
+	}
+	if answer.Type != "noul" {
+		return 0, fmt.Errorf("jev: summary validation answer has type %q, want noul", answer.Type)
+	}
+	if answer.Noul < 0 || answer.Noul > 1 {
+		return 0, fmt.Errorf("jev: summary faithfulness %v outside [0,1]", answer.Noul)
+	}
+	return answer.Noul, nil
+}
+
 // Classify asks Jev to independently score every candidate against the query
 // in one request. Ordering and TopK selection belong to the finder engine.
 func (c *Client) Classify(ctx context.Context, query string, candidates []string) ([]finder.Classification, error) {
