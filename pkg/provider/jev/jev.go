@@ -2,17 +2,18 @@
 package jev
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
+	"github.com/hashicorp/go-retryablehttp"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/finder"
 )
@@ -33,8 +34,7 @@ type Client struct {
 	apiKey     string
 	endpoint   string
 	model      string
-	httpClient HTTPClient
-	maxRetries int
+	httpClient *retryablehttp.Client
 }
 
 type Option func(*Client) error
@@ -64,7 +64,10 @@ func WithHTTPClient(httpClient HTTPClient) Option {
 		if httpClient == nil {
 			return errors.New("jev: nil HTTP client")
 		}
-		client.httpClient = httpClient
+		client.httpClient.HTTPClient = &http.Client{
+			Transport: httpClientTransport{client: httpClient},
+			Timeout:   30 * time.Second,
+		}
 		return nil
 	}
 }
@@ -74,7 +77,7 @@ func WithMaxRetries(maxRetries int) Option {
 		if maxRetries < 0 {
 			return errors.New("jev: max retries cannot be negative")
 		}
-		client.maxRetries = maxRetries
+		client.httpClient.RetryMax = maxRetries
 		return nil
 	}
 }
@@ -83,12 +86,20 @@ func NewClient(apiKey string, opts ...Option) (*Client, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, errors.New("jev: empty API key")
 	}
+	retryClient := retryablehttp.NewClient()
+	retryClient.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+	retryClient.Logger = nil
+	retryClient.RetryWaitMin = 250 * time.Millisecond
+	retryClient.RetryWaitMax = 2 * time.Second
+	retryClient.RetryMax = 2
+	retryClient.CheckRetry = checkRetry
+	retryClient.Backoff = retryablehttp.DefaultBackoff
+	retryClient.ErrorHandler = retryablehttp.PassthroughErrorHandler
 	client := &Client{
 		apiKey:     apiKey,
 		endpoint:   DefaultEndpoint,
 		model:      DefaultModel,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-		maxRetries: 2,
+		httpClient: retryClient,
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -128,7 +139,6 @@ type classifyRequest struct {
 }
 
 type scoreAnswer struct {
-	Type       string  `json:"type"`
 	Score      float64 `json:"score"`
 	Confidence float64 `json:"confidence"`
 }
@@ -140,7 +150,6 @@ type classifyResponse struct {
 
 type anchorResponse struct {
 	Answers map[string]struct {
-		Type string  `json:"type"`
 		Noul float64 `json:"noul"`
 	} `json:"answers"`
 }
@@ -183,12 +192,6 @@ func (c *Client) ShouldAnchor(ctx context.Context, projection finder.JevViewProj
 	answer, ok := response.Answers["should_anchor"]
 	if !ok {
 		return 0, errors.New("jev: response missing answer \"should_anchor\"")
-	}
-	if answer.Type != "noul" {
-		return 0, fmt.Errorf("jev: anchor answer has type %q, want noul", answer.Type)
-	}
-	if answer.Noul < 0 || answer.Noul > 1 {
-		return 0, fmt.Errorf("jev: anchor probability %v outside [0,1]", answer.Noul)
 	}
 	return answer.Noul, nil
 }
@@ -236,107 +239,93 @@ func (c *Client) ValidateSummary(ctx context.Context, projection finder.JevViewP
 	if !ok {
 		return 0, errors.New("jev: response missing answer \"is_faithful\"")
 	}
-	if answer.Type != "noul" {
-		return 0, fmt.Errorf("jev: summary validation answer has type %q, want noul", answer.Type)
-	}
-	if answer.Noul < 0 || answer.Noul > 1 {
-		return 0, fmt.Errorf("jev: summary faithfulness %v outside [0,1]", answer.Noul)
-	}
 	return answer.Noul, nil
 }
 
 // Classify asks Jev to independently score every candidate against the query
 // in one request. Ordering and TopK selection belong to the finder engine.
-func (c *Client) Classify(ctx context.Context, query string, candidates []entry.JevMemoryState) ([]finder.Classification, error) {
-	if c == nil || c.httpClient == nil {
-		return nil, errors.New("jev: client is not enabled")
-	}
-	if strings.TrimSpace(query) == "" {
-		return nil, errors.New("jev: empty classification query")
-	}
-	if len(candidates) == 0 {
-		return nil, nil
-	}
+func (c *Client) Classify(ctx context.Context, query string, candidates []entry.JevMemoryState) iter.Seq2[finder.Classification, error] {
+	return func(yield func(finder.Classification, error) bool) {
+		if c == nil || c.httpClient == nil {
+			yield(finder.Classification{}, errors.New("jev: client is not enabled"))
+			return
+		}
+		if strings.TrimSpace(query) == "" {
+			yield(finder.Classification{}, errors.New("jev: empty classification query"))
+			return
+		}
+		if len(candidates) == 0 {
+			return
+		}
 
-	payload := classifyRequest{Model: c.model, Questions: make(map[string]question, len(candidates))}
-	payload.State.Query = query
-	for i, candidate := range candidates {
-		id := candidateID(i)
-		if candidate.IsZero() {
-			return nil, fmt.Errorf("jev: candidate %d has empty state", i)
+		payload := classifyRequest{Model: c.model, Questions: make(map[string]question, len(candidates))}
+		payload.State.Query = query
+		ids := make([]string, len(candidates))
+		for i, candidate := range candidates {
+			if candidate.IsZero() {
+				yield(finder.Classification{}, fmt.Errorf("jev: candidate %d has empty state", i))
+				return
+			}
+			id := uuid.New().String()
+			ids[i] = id
+			payload.State.Candidates = append(payload.State.Candidates, candidateState{ID: id, State: candidate})
+			payload.Questions[id] = question{
+				Type:         "score",
+				Instructions: fmt.Sprintf("How relevant is candidate %s to the search query? Judge whether it helps answer or recover the requested earlier context.", id),
+				Criteria: []string{
+					"Unrelated to the query",
+					"Shares a topic but does not help answer the query",
+					"Contains relevant information that helps answer the query",
+					"Directly answers the query or identifies the requested context",
+				},
+			}
 		}
-		payload.State.Candidates = append(payload.State.Candidates, candidateState{ID: id, State: candidate})
-		payload.Questions[id] = question{
-			Type:         "score",
-			Instructions: fmt.Sprintf("How relevant is candidate %s to the search query? Judge whether it helps answer or recover the requested earlier context.", id),
-			Criteria: []string{
-				"Unrelated to the query",
-				"Shares a topic but does not help answer the query",
-				"Contains relevant information that helps answer the query",
-				"Directly answers the query or identifies the requested context",
-			},
+		body, err := json.Marshal(payload)
+		if err != nil {
+			yield(finder.Classification{}, fmt.Errorf("jev: encode classification request: %w", err))
+			return
 		}
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("jev: encode classification request: %w", err)
-	}
 
-	var response classifyResponse
-	if err := c.post(ctx, body, &response); err != nil {
-		return nil, err
-	}
-	results := make([]finder.Classification, 0, len(candidates))
-	for i := range candidates {
-		id := candidateID(i)
-		answer, ok := response.Answers[id]
-		if !ok {
-			return nil, fmt.Errorf("jev: response missing answer %q", id)
+		var response classifyResponse
+		if err := c.post(ctx, body, &response); err != nil {
+			yield(finder.Classification{}, err)
+			return
 		}
-		if answer.Type != "score" {
-			return nil, fmt.Errorf("jev: answer %q has type %q, want score", id, answer.Type)
+		for i, id := range ids {
+			answer, ok := response.Answers[id]
+			if !ok {
+				yield(finder.Classification{}, fmt.Errorf("jev: response missing answer %q", id))
+				return
+			}
+			if !yield(finder.Classification{Index: i, Score: answer.Score, Confidence: answer.Confidence}, nil) {
+				return
+			}
 		}
-		results = append(results, finder.Classification{Index: i, Score: answer.Score, Confidence: answer.Confidence})
 	}
-	return results, nil
 }
 
 func (c *Client) post(ctx context.Context, body []byte, target any) error {
-	for attempt := 0; ; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
-		if err != nil {
-			return fmt.Errorf("jev: create request: %w", err)
-		}
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			if attempt < c.maxRetries && ctx.Err() == nil {
-				if err := wait(ctx, retryDelay(nil, attempt)); err != nil {
-					return err
-				}
-				continue
-			}
-			return fmt.Errorf("jev: request: %w", err)
-		}
-		if resp.StatusCode == http.StatusOK {
-			err := json.NewDecoder(resp.Body).Decode(target)
-			resp.Body.Close()
-			if err != nil {
-				return fmt.Errorf("jev: decode response: %w", err)
-			}
-			return nil
-		}
-		message, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
-		resp.Body.Close()
-		if retryable(resp.StatusCode) && attempt < c.maxRetries {
-			if err := wait(ctx, retryDelay(resp, attempt)); err != nil {
-				return err
-			}
-			continue
-		}
-		return &APIError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(message))}
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, body)
+	if err != nil {
+		return fmt.Errorf("jev: create request: %w", err)
 	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("jev: request: %w", err)
+	}
+	if resp.StatusCode == http.StatusOK {
+		err := json.NewDecoder(resp.Body).Decode(target)
+		resp.Body.Close()
+		if err != nil {
+			return fmt.Errorf("jev: decode response: %w", err)
+		}
+		return nil
+	}
+	message, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	resp.Body.Close()
+	return &APIError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(message))}
 }
 
 type APIError struct {
@@ -351,32 +340,20 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("jev: API returned %d: %s", e.StatusCode, e.Body)
 }
 
-func candidateID(index int) string { return fmt.Sprintf("candidate_%d", index) }
-
-func retryable(status int) bool {
-	return status == http.StatusTooManyRequests || status == 529
+type httpClientTransport struct {
+	client HTTPClient
 }
 
-func retryDelay(resp *http.Response, attempt int) time.Duration {
-	if resp != nil {
-		value := resp.Header.Get("Retry-After")
-		if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
-			return time.Duration(seconds) * time.Second
-		}
-		if at, err := http.ParseTime(value); err == nil {
-			return max(time.Until(at), 0)
-		}
-	}
-	return time.Duration(1<<attempt) * 250 * time.Millisecond
+func (t httpClientTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return t.client.Do(req)
 }
 
-func wait(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
+func checkRetry(ctx context.Context, resp *http.Response, err error) (bool, error) {
+	if ctx.Err() != nil {
+		return false, ctx.Err()
 	}
+	if err != nil {
+		return true, nil
+	}
+	return resp != nil && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == 529), nil
 }

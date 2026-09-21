@@ -3,6 +3,7 @@ package finder
 import (
 	"context"
 	"encoding/json"
+	"iter"
 	"testing"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
@@ -69,9 +70,15 @@ func TestAnchorKindsHaveSeparateSearchSemantics(t *testing.T) {
 	}
 }
 
-func (c *fakeJevClassifier) Classify(_ context.Context, _ string, candidates []entry.JevMemoryState) ([]Classification, error) {
-	c.candidates = append([]entry.JevMemoryState(nil), candidates...)
-	return append([]Classification(nil), c.results...), nil
+func (c *fakeJevClassifier) Classify(_ context.Context, _ string, candidates []entry.JevMemoryState) iter.Seq2[Classification, error] {
+	return func(yield func(Classification, error) bool) {
+		c.candidates = append([]entry.JevMemoryState(nil), candidates...)
+		for _, result := range c.results {
+			if !yield(result, nil) {
+				return
+			}
+		}
+	}
 }
 
 func TestJevFindAllClassifiesWithoutEmbeddings(t *testing.T) {

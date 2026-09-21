@@ -154,7 +154,7 @@ func TestTapeJevAnchoringRunsAfterPrimaryStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	index := base.(interface {
-		CandidateIndex(context.Context) ([]finder.Candidate, error)
+		CandidateIndex(context.Context) ([]finder.JevAnchorState, error)
 	})
 	candidates, err := index.CandidateIndex(ctx)
 	if err != nil {

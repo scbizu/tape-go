@@ -510,18 +510,18 @@ func (j *JSONL) SemanticIndex(ctx context.Context) (finder.SemanticIndex, error)
 	return finder.SemanticIndex{Model: model, Items: items}, nil
 }
 
-func (j *JSONL) CandidateIndex(ctx context.Context) ([]finder.Candidate, error) {
+func (j *JSONL) CandidateIndex(ctx context.Context) ([]finder.JevAnchorState, error) {
 	_, state, err := j.ownerState(ctx, false)
 	if err != nil {
 		return nil, fmt.Errorf("jsonl: %w", err)
 	}
 	state.RLock()
 	defer state.RUnlock()
-	var items []finder.Candidate
+	var items []finder.JevAnchorState
 	for _, index := range state.indexes {
 		for _, anchor := range index.anchors {
 			if anchor.Kind == entry.AnchorKindJev && !anchor.State.IsZero() {
-				items = append(items, finder.Candidate{Seq: anchor.Seq, State: anchor.State, Scope: anchor.Scope})
+				items = append(items, anchor.JevAnchorState)
 			}
 		}
 	}

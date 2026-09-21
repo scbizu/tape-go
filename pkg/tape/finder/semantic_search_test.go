@@ -129,10 +129,10 @@ func (s *semanticStore) SemanticIndex(context.Context) (SemanticIndex, error) {
 	return s.index, nil
 }
 
-func (s *semanticStore) CandidateIndex(context.Context) ([]Candidate, error) {
-	out := make([]Candidate, 0, len(s.index.Items))
+func (s *semanticStore) CandidateIndex(context.Context) ([]JevAnchorState, error) {
+	out := make([]JevAnchorState, 0, len(s.index.Items))
 	for _, item := range s.index.Items {
-		out = append(out, Candidate{State: entry.JevMemoryState{Decisions: []string{item.Summary}}, Scope: item.Scope})
+		out = append(out, JevAnchorState{State: entry.JevMemoryState{Decisions: []string{item.Summary}}, Scope: item.Scope})
 	}
 	return out, nil
 }

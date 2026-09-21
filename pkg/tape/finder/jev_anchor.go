@@ -69,9 +69,6 @@ func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike,
 	if err != nil {
 		return nil, false, err
 	}
-	if probability < 0 || probability > 1 {
-		return nil, false, errors.New("finder: Jev anchor probability must be within [0,1]")
-	}
 	if probability < p.Threshold {
 		return nil, false, nil
 	}
@@ -86,9 +83,6 @@ func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike,
 	faithfulness, err := p.Decider.ValidateSummary(ctx, projection, summary)
 	if err != nil {
 		return nil, false, err
-	}
-	if faithfulness < 0 || faithfulness > 1 {
-		return nil, false, errors.New("finder: Jev summary faithfulness must be within [0,1]")
 	}
 	if faithfulness < p.Threshold {
 		return nil, false, nil

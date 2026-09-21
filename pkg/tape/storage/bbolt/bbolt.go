@@ -210,7 +210,7 @@ func (b *Bbolt) Range(ctx context.Context, r view.EntryRange, opts ...storage.Ra
 	return out, err
 }
 
-func (b *Bbolt) CandidateIndex(ctx context.Context) ([]finder.Candidate, error) {
+func (b *Bbolt) CandidateIndex(ctx context.Context) ([]finder.JevAnchorState, error) {
 	ownerID, err := owner.GetOwnerId(ctx)
 	if err != nil {
 		return nil, err
@@ -218,7 +218,7 @@ func (b *Bbolt) CandidateIndex(ctx context.Context) ([]finder.Candidate, error) 
 	if b.db == nil {
 		return nil, errors.New("bbolt: storage is not initialized")
 	}
-	var result []finder.Candidate
+	var result []finder.JevAnchorState
 	err = b.db.View(func(tx *bolt.Tx) error {
 		anchors, err := sessionBucket(tx, anchorsBucket, ownerID, b.sessionID, false)
 		if err != nil || anchors == nil {

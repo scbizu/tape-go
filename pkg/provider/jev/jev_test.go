@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"iter"
 	"net/http"
 	"strings"
 	"testing"
+	"uuid"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/finder"
@@ -28,6 +30,17 @@ func jsonResponse(status int, body string) *http.Response {
 	}
 }
 
+func collectClassifications(seq iter.Seq2[finder.Classification, error]) ([]finder.Classification, error) {
+	var results []finder.Classification
+	for result, err := range seq {
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
 func TestClientClassify(t *testing.T) {
 	t.Parallel()
 
@@ -45,23 +58,37 @@ func TestClientClassify(t *testing.T) {
 		if len(request.State.Candidates[0].State.Decisions) != 1 || request.State.Candidates[0].State.Decisions[0] != "old memory" {
 			t.Fatalf("candidate JSON was not sent as structured state: %#v", request.State.Candidates[0].State)
 		}
-		return jsonResponse(http.StatusOK, `{
-			"model":"jev-1.13.0",
-			"answers":{
-				"candidate_0":{"type":"score","score":1.0,"confidence":0.9},
-				"candidate_1":{"type":"score","score":3.0,"confidence":0.8},
-				"candidate_2":{"type":"score","score":2.0,"confidence":0.7}
+		scores := []float64{1, 3, 2}
+		confidence := []float64{.9, .8, .7}
+		answers := make(map[string]scoreAnswer, len(request.State.Candidates))
+		seen := make(map[string]struct{}, len(request.State.Candidates))
+		for i, candidate := range request.State.Candidates {
+			if _, err := uuid.Parse(candidate.ID); err != nil {
+				t.Fatalf("candidate ID %q is not a UUID: %v", candidate.ID, err)
 			}
-		}`), nil
+			if _, ok := seen[candidate.ID]; ok {
+				t.Fatalf("duplicate candidate ID %q", candidate.ID)
+			}
+			seen[candidate.ID] = struct{}{}
+			if _, ok := request.Questions[candidate.ID]; !ok {
+				t.Fatalf("missing question for candidate ID %q", candidate.ID)
+			}
+			answers[candidate.ID] = scoreAnswer{Score: scores[i], Confidence: confidence[i]}
+		}
+		body, err := json.Marshal(classifyResponse{Model: "jev-1.13.0", Answers: answers})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return jsonResponse(http.StatusOK, string(body)), nil
 	})
 
 	client, err := NewClient("secret", WithHTTPClient(httpClient), WithMaxRetries(0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := client.Classify(context.Background(), "database failure", []entry.JevMemoryState{
+	got, err := collectClassifications(client.Classify(context.Background(), "database failure", []entry.JevMemoryState{
 		{Decisions: []string{"old memory"}}, {Decisions: []string{"best memory"}}, {Decisions: []string{"related memory"}},
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,21 +176,30 @@ func TestClientRetriesRateLimit(t *testing.T) {
 	t.Parallel()
 
 	attempts := 0
-	httpClient := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+	httpClient := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		attempts++
 		if attempts == 1 {
 			response := jsonResponse(http.StatusTooManyRequests, "")
 			response.Header.Set("Retry-After", "0")
 			return response, nil
 		}
-		return jsonResponse(http.StatusOK, `{"model":"jev-1.13.0","answers":{"candidate_0":{"type":"score","score":3,"confidence":1}}}`), nil
+		var request classifyRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		answers := map[string]scoreAnswer{request.State.Candidates[0].ID: {Score: 3, Confidence: 1}}
+		body, err := json.Marshal(classifyResponse{Model: "jev-1.13.0", Answers: answers})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return jsonResponse(http.StatusOK, string(body)), nil
 	})
 
 	client, err := NewClient("secret", WithHTTPClient(httpClient), WithMaxRetries(1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Classify(context.Background(), "query", []entry.JevMemoryState{{Decisions: []string{"hit"}}}); err != nil {
+	if _, err := collectClassifications(client.Classify(context.Background(), "query", []entry.JevMemoryState{{Decisions: []string{"hit"}}})); err != nil {
 		t.Fatal(err)
 	}
 	if attempts != 2 {
@@ -182,7 +218,7 @@ func TestClientReturnsAPIError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Classify(context.Background(), "query", []entry.JevMemoryState{{Decisions: []string{"hit"}}})
+	_, err = collectClassifications(client.Classify(context.Background(), "query", []entry.JevMemoryState{{Decisions: []string{"hit"}}}))
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("Classify error = %v", err)

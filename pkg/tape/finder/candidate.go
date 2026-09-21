@@ -8,8 +8,8 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
-// Candidate is a structured Jev state and the tape range it represents.
-type Candidate struct {
+// JevAnchorState is a structured Jev state and the tape range it represents.
+type JevAnchorState struct {
 	Seq   entry.Seq
 	State entry.JevMemoryState
 	Scope view.EntryRange
@@ -18,17 +18,15 @@ type Candidate struct {
 // CandidateIndexer exposes search candidates without prescribing a search
 // algorithm such as embeddings or classification.
 type CandidateIndexer interface {
-	CandidateIndex(context.Context) ([]Candidate, error)
+	CandidateIndex(context.Context) ([]JevAnchorState, error)
 }
 
 // AnchorMetadata is the storage index representation shared by handoff and Jev
 // anchors. Summary belongs only to handoff; State belongs only to Jev.
 type AnchorMetadata struct {
-	Seq     entry.Seq
+	JevAnchorState
 	Kind    entry.AnchorKind
 	Summary string
-	State   entry.JevMemoryState
-	Scope   view.EntryRange
 }
 
 // AnchorFromEntry decodes the metadata carried by an anchor.
@@ -66,20 +64,20 @@ func AnchorFromEntry(e entry.EntryLike) (AnchorMetadata, bool) {
 		return AnchorMetadata{}, false
 	}
 	return AnchorMetadata{
-		Seq:     e.GetID(),
-		Kind:    kind,
-		Summary: summary,
-		State:   state,
-		Scope:   view.EntryRange{SeqS: seqS, SeqE: seqE},
+		JevAnchorState: JevAnchorState{
+			Seq: e.GetID(), State: state,
+			Scope: view.EntryRange{SeqS: seqS, SeqE: seqE},
+		},
+		Kind: kind, Summary: summary,
 	}, true
 }
 
 // CandidateFromAnchor returns only Jev anchors with structured memory state.
 // Ordinary entries and handoff anchors are not Jev search candidates.
-func CandidateFromAnchor(e entry.EntryLike) (Candidate, bool) {
+func CandidateFromAnchor(e entry.EntryLike) (JevAnchorState, bool) {
 	anchor, ok := AnchorFromEntry(e)
 	if !ok || anchor.Kind != entry.AnchorKindJev || anchor.State.IsZero() {
-		return Candidate{}, false
+		return JevAnchorState{}, false
 	}
-	return Candidate{Seq: anchor.Seq, State: anchor.State, Scope: anchor.Scope}, true
+	return anchor.JevAnchorState, true
 }
