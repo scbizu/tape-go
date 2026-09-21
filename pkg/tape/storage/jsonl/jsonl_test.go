@@ -112,7 +112,7 @@ func TestJSONLCandidateIndex(t *testing.T) {
 	if err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent("ordinary"))); err != nil {
 		t.Fatal(err)
 	}
-	payload, err := json.Marshal(entry.JevAnchor{State: entry.JevMemoryState{Overview: "searchable"}, SeqS: seq(1), SeqE: seq(2)})
+	payload, err := json.Marshal(entry.JevAnchor{State: entry.JevMemoryState{Decisions: []string{"searchable"}}, SeqS: seq(1), SeqE: seq(2)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestJSONLCandidateIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Seq != seq(2) || items[0].State.Overview != "searchable" ||
+	if len(items) != 1 || items[0].Seq != seq(2) || len(items[0].State.Decisions) != 1 || items[0].State.Decisions[0] != "searchable" ||
 		items[0].Scope != (view.EntryRange{SeqS: seq(1), SeqE: seq(2)}) {
 		t.Fatalf("CandidateIndex = %#v", items)
 	}

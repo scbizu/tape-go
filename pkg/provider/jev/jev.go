@@ -296,12 +296,6 @@ func (c *Client) Classify(ctx context.Context, query string, candidates []entry.
 		if answer.Type != "score" {
 			return nil, fmt.Errorf("jev: answer %q has type %q, want score", id, answer.Type)
 		}
-		if answer.Score < 0 || answer.Score > 3 {
-			return nil, fmt.Errorf("jev: answer %q has score %v outside [0,3]", id, answer.Score)
-		}
-		if answer.Confidence < 0 || answer.Confidence > 1 {
-			return nil, fmt.Errorf("jev: answer %q has confidence %v outside [0,1]", id, answer.Confidence)
-		}
 		results = append(results, finder.Classification{Index: i, Score: answer.Score, Confidence: answer.Confidence})
 	}
 	return results, nil

@@ -114,7 +114,7 @@ func (m *Model) Summarize(ctx context.Context, projection finder.JevViewProjecti
 				Role: deepseek.ChatMessageRoleSystem,
 				Content: "Summarize the supplied tape view faithfully and compactly as a JSON object for future Jev retrieval. " +
 					"Return exactly these fields: overview (string), facts, decisions, constraints, preferences, results, and unresolved_work (arrays of strings). " +
-					"Use empty arrays when a category has no content. Preserve concrete names and values. " +
+					"The decisions array must contain at least one durable retrieval decision; use empty arrays when another category has no content. Preserve concrete names and values. " +
 					"Do not infer or add information that is not present. Return JSON only.",
 			},
 			{Role: deepseek.ChatMessageRoleUser, Content: string(state)},
@@ -133,24 +133,12 @@ func (m *Model) Summarize(ctx context.Context, projection finder.JevViewProjecti
 	if summary == "" {
 		return entry.JevMemoryState{}, errors.New("ds: summarize empty content")
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(summary), &fields); err != nil {
-		return entry.JevMemoryState{}, fmt.Errorf("ds: summarize invalid JSON object: %w", err)
-	}
-	if fields == nil {
-		return entry.JevMemoryState{}, errors.New("ds: summarize response is not a JSON object")
-	}
-	for _, name := range []string{"overview", "facts", "decisions", "constraints", "preferences", "results", "unresolved_work"} {
-		if _, ok := fields[name]; !ok {
-			return entry.JevMemoryState{}, fmt.Errorf("ds: summarize response missing field %q", name)
-		}
-	}
 	var memory entry.JevMemoryState
 	if err := json.Unmarshal([]byte(summary), &memory); err != nil {
 		return entry.JevMemoryState{}, fmt.Errorf("ds: summarize invalid memory state: %w", err)
 	}
-	if strings.TrimSpace(memory.Overview) == "" && len(memory.Facts)+len(memory.Decisions)+len(memory.Constraints)+len(memory.Preferences)+len(memory.Results)+len(memory.UnresolvedWork) == 0 {
-		return entry.JevMemoryState{}, errors.New("ds: summarize returned empty memory state")
+	if memory.IsZero() {
+		return entry.JevMemoryState{}, errors.New("ds: summarize returned memory state without a decision")
 	}
 	return memory, nil
 }

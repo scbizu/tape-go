@@ -52,7 +52,7 @@ func TestJevAnchorPolicyDecidesFromWholeView(t *testing.T) {
 	decider := &recordingAnchorDecider{}
 	_, ok, err := NewJevAnchorPolicy(
 		decider,
-		fixedSummarizer{Overview: "earlier durable fact"},
+		fixedSummarizer{Decisions: []string{"retain earlier durable fact"}},
 		.7,
 	).MakeAnchor(context.Background(), latest, view.EntryView{
 		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(4), SeqE: entry.SeqFromUint64(6)},
@@ -72,8 +72,9 @@ func TestJevAnchorPolicyCreatesJevAnchor(t *testing.T) {
 	t.Parallel()
 
 	memoryState := fixedSummarizer{
-		Overview: "Database region: Tokyo.",
-		Facts:    []string{"Production database region is Tokyo."},
+		Overview:  "Database region: Tokyo.",
+		Facts:     []string{"Production database region is Tokyo."},
+		Decisions: []string{"Retain the production database region."},
 	}
 	policy := NewJevAnchorPolicy(fixedAnchorDecider(.9), memoryState, .7)
 	latest := entry.NewEntry(
@@ -110,7 +111,7 @@ func TestJevAnchorPolicyCreatesJevAnchor(t *testing.T) {
 func TestJevAnchorPolicyHonorsThreshold(t *testing.T) {
 	t.Parallel()
 
-	_, ok, err := NewJevAnchorPolicy(fixedAnchorDecider(.4), fixedSummarizer{Overview: "unused"}, .7).MakeAnchor(
+	_, ok, err := NewJevAnchorPolicy(fixedAnchorDecider(.4), fixedSummarizer{Decisions: []string{"unused"}}, .7).MakeAnchor(
 		context.Background(),
 		entry.NewEntry(entry.WithEntryContent("transient")),
 		view.EntryView{
@@ -144,7 +145,7 @@ func TestJevAnchorPolicyRejectsUnfaithfulSummary(t *testing.T) {
 	e := entry.NewEntry(entry.WithEntryContent("source fact"))
 	_, ok, err := NewJevAnchorPolicy(
 		splitAnchorDecider{should: .95, faithful: .2},
-		fixedSummarizer{Overview: "unsupported claim"},
+		fixedSummarizer{Decisions: []string{"unsupported claim"}},
 		.7,
 	).MakeAnchor(context.Background(), e, view.EntryView{
 		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},

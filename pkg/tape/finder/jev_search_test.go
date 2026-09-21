@@ -39,7 +39,7 @@ func TestAnchorKindsHaveSeparateSearchSemantics(t *testing.T) {
 		t.Fatal("handoff anchor became a Jev candidate")
 	}
 	jevPayload, err := json.Marshal(entry.JevAnchor{
-		State: entry.JevMemoryState{Overview: "archived decision"},
+		State: entry.JevMemoryState{Decisions: []string{"archived decision"}},
 		SeqS:  entry.SeqFromUint64(4),
 		SeqE:  entry.SeqFromUint64(9),
 	})
@@ -111,7 +111,7 @@ func TestJevCandidateLimitKeepsRecentCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(classifier.candidates) != 1 || classifier.candidates[0].Overview != "recent" {
+	if len(classifier.candidates) != 1 || len(classifier.candidates[0].Decisions) != 1 || classifier.candidates[0].Decisions[0] != "recent" {
 		t.Fatalf("classified candidates = %#v", classifier.candidates)
 	}
 	if got[0].Scope != (view.EntryRange{SeqS: entry.SeqFromUint64(2), SeqE: entry.SeqFromUint64(3)}) {

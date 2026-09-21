@@ -155,7 +155,7 @@ func TestModelSummarize(t *testing.T) {
 		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: `{
 			"overview":"concise memory",
 			"facts":["database region is Tokyo"],
-			"decisions":[],"constraints":[],"preferences":[],"results":[],"unresolved_work":[]
+			"decisions":["retain the database region"],"constraints":[],"preferences":[],"results":[],"unresolved_work":[]
 		}`}}},
 	}}
 	llm := &Model{client: client, name: "deepseek-test"}
@@ -180,9 +180,9 @@ func TestModelSummarize(t *testing.T) {
 	}
 }
 
-func TestModelSummarizeRejectsIncompleteState(t *testing.T) {
+func TestModelSummarizeRejectsStateWithoutDecision(t *testing.T) {
 	client := &fakeClient{response: &deepseek.ChatCompletionResponse{
-		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: `{"overview":"missing categories"}`}}},
+		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: `{"overview":"fact only","facts":["database region is Tokyo"]}`}}},
 	}}
 	llm := &Model{client: client, name: "deepseek-test"}
 	memory := view.EntryView{Raw: []entry.EntryLike{entry.NewEntry(entry.WithEntryContent("fact"))}}
@@ -191,7 +191,7 @@ func TestModelSummarizeRejectsIncompleteState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := llm.Summarize(context.Background(), projection); err == nil {
-		t.Fatal("Summarize accepted incomplete Jev memory state")
+		t.Fatal("Summarize accepted Jev memory state without a decision")
 	}
 }
 

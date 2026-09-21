@@ -3,6 +3,7 @@ package entry
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -63,6 +64,7 @@ type HandoffAnchor struct {
 }
 
 // JevMemoryState is the structured memory representation generated for Jev.
+// A usable state always carries at least one retrieval decision.
 type JevMemoryState struct {
 	Overview       string   `json:"overview"`
 	Facts          []string `json:"facts"`
@@ -74,8 +76,12 @@ type JevMemoryState struct {
 }
 
 func (s JevMemoryState) IsZero() bool {
-	return s.Overview == "" &&
-		len(s.Facts)+len(s.Decisions)+len(s.Constraints)+len(s.Preferences)+len(s.Results)+len(s.UnresolvedWork) == 0
+	for _, decision := range s.Decisions {
+		if strings.TrimSpace(decision) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // JevAnchor is a classifier-triggered memory checkpoint. Unlike a handoff

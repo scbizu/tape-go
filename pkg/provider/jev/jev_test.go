@@ -42,7 +42,7 @@ func TestClientClassify(t *testing.T) {
 		if request.Model != DefaultModel || request.State.Query != "database failure" || len(request.Questions) != 3 {
 			t.Fatalf("unexpected request: %#v", request)
 		}
-		if request.State.Candidates[0].State.Overview != "old memory" {
+		if len(request.State.Candidates[0].State.Decisions) != 1 || request.State.Candidates[0].State.Decisions[0] != "old memory" {
 			t.Fatalf("candidate JSON was not sent as structured state: %#v", request.State.Candidates[0].State)
 		}
 		return jsonResponse(http.StatusOK, `{
@@ -60,7 +60,7 @@ func TestClientClassify(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := client.Classify(context.Background(), "database failure", []entry.JevMemoryState{
-		{Overview: "old memory"}, {Overview: "best memory"}, {Overview: "related memory"},
+		{Decisions: []string{"old memory"}}, {Decisions: []string{"best memory"}}, {Decisions: []string{"related memory"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +122,8 @@ func TestClientValidateSummary(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		if len(request.State.SourceView.Entries) != 1 || request.State.ProposedSummary.Overview != "summary" || request.Questions["is_faithful"].Type != "noul" {
+		if len(request.State.SourceView.Entries) != 1 || len(request.State.ProposedSummary.Decisions) != 1 ||
+			request.State.ProposedSummary.Decisions[0] != "summary" || request.Questions["is_faithful"].Type != "noul" {
 			t.Fatalf("unexpected request: %#v", request)
 		}
 		return jsonResponse(http.StatusOK, `{"answers":{"is_faithful":{"type":"noul","noul":0.96}}}`), nil
@@ -135,7 +136,7 @@ func TestClientValidateSummary(t *testing.T) {
 		Scope:   view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
 		Entries: []finder.JevViewEntry{{Seq: entry.SeqFromUint64(1), Kind: entry.EntryUser, Summary: "source"}},
 	}
-	got, err := client.ValidateSummary(context.Background(), projection, entry.JevMemoryState{Overview: "summary"})
+	got, err := client.ValidateSummary(context.Background(), projection, entry.JevMemoryState{Decisions: []string{"summary"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +163,7 @@ func TestClientRetriesRateLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Classify(context.Background(), "query", []entry.JevMemoryState{{Overview: "hit"}}); err != nil {
+	if _, err := client.Classify(context.Background(), "query", []entry.JevMemoryState{{Decisions: []string{"hit"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if attempts != 2 {
@@ -181,7 +182,7 @@ func TestClientReturnsAPIError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Classify(context.Background(), "query", []entry.JevMemoryState{{Overview: "hit"}})
+	_, err = client.Classify(context.Background(), "query", []entry.JevMemoryState{{Decisions: []string{"hit"}}})
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("Classify error = %v", err)
