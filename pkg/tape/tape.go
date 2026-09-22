@@ -88,8 +88,6 @@ func (t *Tape) Close() error {
 
 func (t *Tape) SetView(r view.EntryRange) {
 	t.View.Scope = r
-	t.View.Raw = nil
-	t.View.Summary = ""
 	t.resetReadState()
 }
 

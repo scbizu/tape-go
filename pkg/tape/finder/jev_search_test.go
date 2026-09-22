@@ -94,7 +94,7 @@ func TestJevFindAllReturnsBestClassificationWithoutEmbeddings(t *testing.T) {
 		{Index: 2, Score: 3, Confidence: .9},
 	}}
 
-	got, err := NewJev("query", 1, classifier).FindAll(context.Background(), store)
+	got, err := NewJev("query", classifier).FindAll(context.Background(), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,21 +109,12 @@ func TestJevFindAllReturnsBestClassificationWithoutEmbeddings(t *testing.T) {
 func TestJevFindAllReturnsEmptySliceWithoutCandidates(t *testing.T) {
 	t.Parallel()
 
-	got, err := NewJev("query", 1, &fakeJevClassifier{}).FindAll(context.Background(), newSemanticStore(&fakeModel{}))
+	got, err := NewJev("query", &fakeJevClassifier{}).FindAll(context.Background(), newSemanticStore(&fakeModel{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got == nil || len(got) != 0 {
 		t.Fatalf("FindAll = %#v, want non-nil empty slice", got)
-	}
-}
-
-func TestJevRequiresTopKOne(t *testing.T) {
-	t.Parallel()
-
-	_, err := NewJev("query", 2, &fakeJevClassifier{}).FindAll(context.Background(), newSemanticStore(&fakeModel{}))
-	if err == nil {
-		t.Fatal("FindAll accepted TopK other than one")
 	}
 }
 
@@ -135,7 +126,7 @@ func TestJevCandidateLimitKeepsRecentCandidates(t *testing.T) {
 	store.add(2, "recent")
 	classifier := &fakeJevClassifier{results: []Classification{{Index: 0, Score: 3, Confidence: 1}}}
 
-	got, err := NewJev("query", 1, classifier).WithCandidateLimit(1).FindAll(context.Background(), store)
+	got, err := NewJev("query", classifier).WithCandidateLimit(1).FindAll(context.Background(), store)
 	if err != nil {
 		t.Fatal(err)
 	}

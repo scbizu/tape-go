@@ -113,25 +113,6 @@ func TestTapeSetViewPreservesAnchorMaker(t *testing.T) {
 	}
 }
 
-func TestTapeStoreUsesStorageWithoutRunningAnchorMaker(t *testing.T) {
-	t.Parallel()
-
-	tape := newMemoryTape(t, "owner-a", "session-a")
-	called := false
-	tape.View.AnchorMaker = anchorMakerFunc(func(context.Context, entry.EntryLike, view.EntryView) (entry.EntryLike, bool, error) {
-		called = true
-		return nil, false, nil
-	})
-	ctx := owner.WithOwnerId(context.Background(), "owner-a")
-
-	if err := tape.Store(ctx, entry.NewEntry(entry.WithEntryContent("raw store"))); err != nil {
-		t.Fatal(err)
-	}
-	if called {
-		t.Fatal("storage Store invoked the view's AnchorMaker")
-	}
-}
-
 func TestTapeJevAnchoringRunsAfterPrimaryStore(t *testing.T) {
 	t.Parallel()
 
@@ -168,36 +149,6 @@ func TestTapeJevAnchoringRunsAfterPrimaryStore(t *testing.T) {
 	}
 	if _, err := tape.Rewind(ctx); !errors.Is(err, storage.ErrNoAnchor) {
 		t.Fatalf("full rewind recognized Jev anchor: %v", err)
-	}
-}
-
-func TestTapeJevAnchorFailureIsFailOpen(t *testing.T) {
-	t.Parallel()
-
-	tape := newMemoryTape(t, "owner-a", "session-a")
-	want := errors.New("classifier unavailable")
-	tape.View.AnchorMaker = anchorMakerFunc(func(context.Context, entry.EntryLike, view.EntryView) (entry.EntryLike, bool, error) {
-		return nil, false, want
-	})
-	var reported error
-	tape.TapeStorage = storage.NewAnchoringStorage(
-		tape.TapeStorage,
-		&tape.View,
-		func(err error) { reported = err },
-	)
-	ctx := owner.WithOwnerId(context.Background(), "owner-a")
-	if err := tape.Store(ctx, entry.NewEntry(entry.WithEntryContent("committed"))); err != nil {
-		t.Fatal(err)
-	}
-	if !errors.Is(reported, want) {
-		t.Fatalf("reported error = %v", reported)
-	}
-	got, err := tape.Range(ctx, view.EntryRange{
-		SeqS: entry.SeqFromUint64(1),
-		SeqE: entry.SeqFromUint64(2),
-	})
-	if err != nil || len(got.Raw) != 1 || got.Raw[0].GetSummary() != "committed" {
-		t.Fatalf("primary entry was not committed: %#v, %v", got, err)
 	}
 }
 

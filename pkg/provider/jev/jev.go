@@ -243,7 +243,7 @@ func (c *Client) ValidateSummary(ctx context.Context, projection finder.JevViewP
 }
 
 // Classify asks Jev to independently score every candidate against the query
-// in one request. Ordering and TopK selection belong to the finder engine.
+// in one request. Best-result selection belongs to the finder engine.
 func (c *Client) Classify(ctx context.Context, query string, candidates []entry.JevMemoryState) iter.Seq2[finder.Classification, error] {
 	return func(yield func(finder.Classification, error) bool) {
 		if c == nil || c.httpClient == nil {
@@ -304,7 +304,7 @@ func (c *Client) Classify(ctx context.Context, query string, candidates []entry.
 	}
 }
 
-func (c *Client) post(ctx context.Context, body []byte, target any) error {
+func (c *Client) post(ctx context.Context, body []byte, target any) (err error) {
 	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, body)
 	if err != nil {
 		return fmt.Errorf("jev: create request: %w", err)
@@ -315,24 +315,18 @@ func (c *Client) post(ctx context.Context, body []byte, target any) error {
 	if err != nil {
 		return fmt.Errorf("jev: request: %w", err)
 	}
+	defer func() {
+		err = errors.Join(err, resp.Body.Close())
+	}()
 	if resp.StatusCode == http.StatusOK {
-		decodeErr := json.NewDecoder(resp.Body).Decode(target)
-		closeErr := resp.Body.Close()
-		if decodeErr != nil {
-			return fmt.Errorf("jev: decode response: %w", decodeErr)
-		}
-		if closeErr != nil {
-			return fmt.Errorf("jev: close response body: %w", closeErr)
+		if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+			return fmt.Errorf("jev: decode response: %w", err)
 		}
 		return nil
 	}
-	message, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
-	closeErr := resp.Body.Close()
-	if readErr != nil {
-		return fmt.Errorf("jev: read error response: %w", readErr)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("jev: close error response: %w", closeErr)
+	message, err := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	if err != nil {
+		return fmt.Errorf("jev: read error response: %w", err)
 	}
 	return &APIError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(message))}
 }

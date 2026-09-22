@@ -27,13 +27,12 @@ type JevClassifier interface {
 // Semantic: candidates go directly from the tape index to the classifier.
 type Jev struct {
 	Query          string        `validate:"required"`
-	TopK           int           `validate:"eq=1"`
 	CandidateLimit int           `validate:"gte=0"`
 	Classifier     JevClassifier `validate:"required"`
 }
 
-func NewJev(query string, topK int, classifier JevClassifier) Jev {
-	return Jev{Query: query, TopK: topK, Classifier: classifier}
+func NewJev(query string, classifier JevClassifier) Jev {
+	return Jev{Query: query, Classifier: classifier}
 }
 
 // WithCandidateLimit limits classification to the most recent candidates.
@@ -48,23 +47,10 @@ func (j Jev) Find(ctx context.Context, tape storage.EntryStorage) (view.EntryVie
 	if err != nil {
 		return view.EntryView{}, err
 	}
-	out := view.EntryView{}
-	for i, entryView := range views {
-		if i == 0 || entryView.Scope.SeqS.Cmp(out.Scope.SeqS) < 0 {
-			out.Scope.SeqS = entryView.Scope.SeqS
-		}
-		if entryView.Scope.SeqE.Cmp(out.Scope.SeqE) > 0 {
-			out.Scope.SeqE = entryView.Scope.SeqE
-		}
-		if out.SessionId == "" {
-			out.SessionId = entryView.SessionId
-		}
-		if out.Owner == "" {
-			out.Owner = entryView.Owner
-		}
-		out.Raw = append(out.Raw, entryView.Raw...)
+	if len(views) == 0 {
+		return view.EntryView{}, nil
 	}
-	return out, nil
+	return views[0], nil
 }
 
 func (j Jev) FindAll(ctx context.Context, tape storage.EntryStorage) ([]view.EntryView, error) {
