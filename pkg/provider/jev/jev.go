@@ -304,7 +304,7 @@ func (c *Client) Classify(ctx context.Context, query string, candidates []entry.
 	}
 }
 
-func (c *Client) post(ctx context.Context, body []byte, target any) (err error) {
+func (c *Client) post(ctx context.Context, body []byte, target any) error {
 	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, body)
 	if err != nil {
 		return fmt.Errorf("jev: create request: %w", err)
@@ -315,20 +315,18 @@ func (c *Client) post(ctx context.Context, body []byte, target any) (err error) 
 	if err != nil {
 		return fmt.Errorf("jev: request: %w", err)
 	}
-	defer func() {
-		err = errors.Join(err, resp.Body.Close())
-	}()
-	if resp.StatusCode == http.StatusOK {
-		if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
-			return fmt.Errorf("jev: decode response: %w", err)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		message, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("jev: read error response: %w", err)
 		}
-		return nil
+		return &APIError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(message))}
 	}
-	message, err := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
-	if err != nil {
-		return fmt.Errorf("jev: read error response: %w", err)
+	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+		return fmt.Errorf("jev: decode response: %w", err)
 	}
-	return &APIError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(message))}
+	return nil
 }
 
 type APIError struct {
