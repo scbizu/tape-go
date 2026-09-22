@@ -158,3 +158,26 @@ func TestJevAnchorPolicyRejectsUnfaithfulSummary(t *testing.T) {
 		t.Fatal("unfaithful summary became a Jev anchor")
 	}
 }
+
+func TestJevAnchorPolicyValidatesConfiguration(t *testing.T) {
+	t.Parallel()
+
+	e := entry.NewEntry(entry.WithEntryContent("source fact"))
+	memory := view.EntryView{Raw: []entry.EntryLike{e}}
+	tests := []struct {
+		name   string
+		policy JevAnchorPolicy
+	}{
+		{name: "missing decider", policy: NewJevAnchorPolicy(nil, fixedSummarizer{Decisions: []string{"summary"}}, .7)},
+		{name: "missing summarizer", policy: NewJevAnchorPolicy(fixedAnchorDecider(.9), nil, .7)},
+		{name: "invalid threshold", policy: NewJevAnchorPolicy(fixedAnchorDecider(.9), fixedSummarizer{Decisions: []string{"summary"}}, 2)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if _, _, err := test.policy.MakeAnchor(context.Background(), e, memory); err == nil {
+				t.Fatal("MakeAnchor accepted invalid policy")
+			}
+		})
+	}
+}

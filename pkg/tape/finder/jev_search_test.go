@@ -81,7 +81,7 @@ func (c *fakeJevClassifier) Classify(_ context.Context, _ string, candidates []e
 	}
 }
 
-func TestJevFindAllClassifiesWithoutEmbeddings(t *testing.T) {
+func TestJevFindAllReturnsBestClassificationWithoutEmbeddings(t *testing.T) {
 	t.Parallel()
 
 	store := newSemanticStore(&fakeModel{})
@@ -94,15 +94,36 @@ func TestJevFindAllClassifiesWithoutEmbeddings(t *testing.T) {
 		{Index: 2, Score: 3, Confidence: .9},
 	}}
 
-	got, err := NewJev("query", 2, classifier).FindAll(context.Background(), store)
+	got, err := NewJev("query", 1, classifier).FindAll(context.Background(), store)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(classifier.candidates) != 3 {
 		t.Fatalf("classified candidates = %d, want 3", len(classifier.candidates))
 	}
-	if len(got) != 2 || got[0].Raw[0].GetSummary() != "best" || got[1].Raw[0].GetSummary() != "related" {
-		t.Fatalf("FindAll order mismatch: %#v", got)
+	if len(got) != 1 || got[0].Raw[0].GetSummary() != "best" {
+		t.Fatalf("FindAll result mismatch: %#v", got)
+	}
+}
+
+func TestJevFindAllReturnsEmptySliceWithoutCandidates(t *testing.T) {
+	t.Parallel()
+
+	got, err := NewJev("query", 1, &fakeJevClassifier{}).FindAll(context.Background(), newSemanticStore(&fakeModel{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Fatalf("FindAll = %#v, want non-nil empty slice", got)
+	}
+}
+
+func TestJevRequiresTopKOne(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewJev("query", 2, &fakeJevClassifier{}).FindAll(context.Background(), newSemanticStore(&fakeModel{}))
+	if err == nil {
+		t.Fatal("FindAll accepted TopK other than one")
 	}
 }
 

@@ -316,15 +316,24 @@ func (c *Client) post(ctx context.Context, body []byte, target any) error {
 		return fmt.Errorf("jev: request: %w", err)
 	}
 	if resp.StatusCode == http.StatusOK {
-		err := json.NewDecoder(resp.Body).Decode(target)
-		resp.Body.Close()
-		if err != nil {
-			return fmt.Errorf("jev: decode response: %w", err)
+		decodeErr := json.NewDecoder(resp.Body).Decode(target)
+		closeErr := resp.Body.Close()
+		if decodeErr != nil {
+			return fmt.Errorf("jev: decode response: %w", decodeErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("jev: close response body: %w", closeErr)
 		}
 		return nil
 	}
-	message, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
-	resp.Body.Close()
+	message, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	closeErr := resp.Body.Close()
+	if readErr != nil {
+		return fmt.Errorf("jev: read error response: %w", readErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("jev: close error response: %w", closeErr)
+	}
 	return &APIError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(message))}
 }
 

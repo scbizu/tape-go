@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"sort"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
@@ -27,10 +26,10 @@ type JevClassifier interface {
 // Jev is a classifier-based search engine. It is intentionally independent of
 // Semantic: candidates go directly from the tape index to the classifier.
 type Jev struct {
-	Query          string
-	TopK           int
-	CandidateLimit int
-	Classifier     JevClassifier
+	Query          string        `validate:"required"`
+	TopK           int           `validate:"eq=1"`
+	CandidateLimit int           `validate:"gte=0"`
+	Classifier     JevClassifier `validate:"required"`
 }
 
 func NewJev(query string, topK int, classifier JevClassifier) Jev {
@@ -69,17 +68,8 @@ func (j Jev) Find(ctx context.Context, tape storage.EntryStorage) (view.EntryVie
 }
 
 func (j Jev) FindAll(ctx context.Context, tape storage.EntryStorage) ([]view.EntryView, error) {
-	if j.Query == "" {
-		return nil, errors.New("finder: empty Jev query")
-	}
-	if j.TopK <= 0 {
-		return nil, errors.New("finder: invalid Jev topK")
-	}
-	if j.CandidateLimit < 0 {
-		return nil, errors.New("finder: invalid Jev candidate limit")
-	}
-	if j.Classifier == nil {
-		return nil, errors.New("finder: nil Jev classifier")
+	if err := validateStructure("Jev search", j); err != nil {
+		return nil, err
 	}
 	indexedTape := tape
 	for {
@@ -101,22 +91,20 @@ func (j Jev) FindAll(ctx context.Context, tape storage.EntryStorage) ([]view.Ent
 		candidates = candidates[len(candidates)-j.CandidateLimit:]
 	}
 	if len(candidates) == 0 {
-		return nil, nil
+		return []view.EntryView{}, nil
 	}
 
 	states := make([]entry.JevMemoryState, len(candidates))
 	for i := range candidates {
 		states[i] = candidates[i].State
 	}
-	classified := make([]Classification, 0, len(candidates))
+	seen := make(map[int]struct{}, len(candidates))
+	var best Classification
+	found := false
 	for result, err := range j.Classifier.Classify(ctx, j.Query, states) {
 		if err != nil {
 			return nil, fmt.Errorf("finder: Jev classify: %w", err)
 		}
-		classified = append(classified, result)
-	}
-	seen := make(map[int]struct{}, len(classified))
-	for _, result := range classified {
 		if result.Index < 0 || result.Index >= len(candidates) {
 			return nil, fmt.Errorf("finder: Jev classification index %d out of range", result.Index)
 		}
@@ -124,22 +112,16 @@ func (j Jev) FindAll(ctx context.Context, tape storage.EntryStorage) ([]view.Ent
 			return nil, fmt.Errorf("finder: duplicate Jev classification index %d", result.Index)
 		}
 		seen[result.Index] = struct{}{}
-	}
-	sort.SliceStable(classified, func(i, k int) bool {
-		if classified[i].Score == classified[k].Score {
-			return classified[i].Confidence > classified[k].Confidence
+		if !found || result.Score > best.Score || result.Score == best.Score && result.Confidence > best.Confidence {
+			best, found = result, true
 		}
-		return classified[i].Score > classified[k].Score
-	})
-
-	limit := min(j.TopK, len(classified))
-	out := make([]view.EntryView, 0, limit)
-	for _, result := range classified[:limit] {
-		ev, err := tape.Range(ctx, candidates[result.Index].Scope)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, ev)
 	}
-	return out, nil
+	if !found {
+		return []view.EntryView{}, nil
+	}
+	ev, err := tape.Range(ctx, candidates[best.Index].Scope)
+	if err != nil {
+		return nil, err
+	}
+	return []view.EntryView{ev}, nil
 }

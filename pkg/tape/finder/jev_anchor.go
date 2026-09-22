@@ -39,9 +39,9 @@ type JevSummarizer interface {
 // JevAnchorPolicy lets Jev decide when to checkpoint, then delegates the
 // bounded active-view summary to an LLM provider.
 type JevAnchorPolicy struct {
-	Decider    JevAnchorDecider
-	Summarizer JevSummarizer
-	Threshold  float64
+	Decider    JevAnchorDecider `validate:"required"`
+	Summarizer JevSummarizer    `validate:"required"`
+	Threshold  float64          `validate:"gte=0,lte=1"`
 }
 
 func NewJevAnchorPolicy(decider JevAnchorDecider, summarizer JevSummarizer, threshold float64) JevAnchorPolicy {
@@ -49,14 +49,8 @@ func NewJevAnchorPolicy(decider JevAnchorDecider, summarizer JevSummarizer, thre
 }
 
 func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike, memory view.EntryView) (entry.EntryLike, bool, error) {
-	if p.Decider == nil {
-		return nil, false, errors.New("finder: nil Jev anchor decider")
-	}
-	if p.Summarizer == nil {
-		return nil, false, errors.New("finder: nil Jev anchor summarizer")
-	}
-	if p.Threshold < 0 || p.Threshold > 1 {
-		return nil, false, errors.New("finder: Jev anchor threshold must be within [0,1]")
+	if err := validateStructure("Jev anchor policy", p); err != nil {
+		return nil, false, err
 	}
 	if latest == nil || latest.GetKind().IsAnchor() {
 		return nil, false, nil

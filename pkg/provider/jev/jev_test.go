@@ -22,6 +22,13 @@ func (f roundTripFunc) Do(request *http.Request) (*http.Response, error) {
 	return f(request)
 }
 
+type failingReadCloser struct {
+	err error
+}
+
+func (r failingReadCloser) Read([]byte) (int, error) { return 0, r.err }
+func (failingReadCloser) Close() error               { return nil }
+
 func jsonResponse(status int, body string) *http.Response {
 	return &http.Response{
 		StatusCode: status,
@@ -222,5 +229,26 @@ func TestClientReturnsAPIError(t *testing.T) {
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("Classify error = %v", err)
+	}
+}
+
+func TestClientReturnsResponseReadError(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("read failed")
+	httpClient := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Header:     make(http.Header),
+			Body:       failingReadCloser{err: want},
+		}, nil
+	})
+	client, err := NewClient("bad", WithHTTPClient(httpClient), WithMaxRetries(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = collectClassifications(client.Classify(context.Background(), "query", []entry.JevMemoryState{{Decisions: []string{"hit"}}}))
+	if !errors.Is(err, want) {
+		t.Fatalf("Classify error = %v, want response read error", err)
 	}
 }
