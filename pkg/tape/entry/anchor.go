@@ -89,6 +89,9 @@ func (s JevMemoryState) IsZero() bool {
 type JevAnchor struct {
 	State      JevMemoryState
 	SeqS, SeqE Seq
+	// Replaces names older Jev anchors whose information this anchor preserves.
+	// The old entries remain on tape for rewind and provenance.
+	Replaces []Seq
 }
 
 // NewJevAnchor constructs an anchor:jev entry from its typed payload.

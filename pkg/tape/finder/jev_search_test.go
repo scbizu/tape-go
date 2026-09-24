@@ -36,7 +36,7 @@ func TestAnchorKindsHaveSeparateSearchSemantics(t *testing.T) {
 		candidate.Scope != (view.EntryRange{SeqS: entry.SeqFromUint64(4), SeqE: entry.SeqFromUint64(9)}) {
 		t.Fatalf("candidate = %#v", candidate)
 	}
-	if _, ok := CandidateFromAnchor(handoff); ok {
+	if _, ok := JevAnchorFromEntry(handoff); ok {
 		t.Fatal("handoff anchor became a Jev candidate")
 	}
 	jevPayload, err := json.Marshal(entry.JevAnchor{
@@ -48,10 +48,10 @@ func TestAnchorKindsHaveSeparateSearchSemantics(t *testing.T) {
 		t.Fatal(err)
 	}
 	jevAnchor := entry.NewAnchor(entry.SeqFromUint64(10), "owner-a", entry.AnchorKindJev, jevPayload)
-	if _, ok := CandidateFromAnchor(jevAnchor); !ok {
+	if _, ok := JevAnchorFromEntry(jevAnchor); !ok {
 		t.Fatal("Jev anchor was not a Jev candidate")
 	}
-	if _, ok := CandidateFromAnchor(entry.NewEntry(entry.WithEntryContent("ordinary"))); ok {
+	if _, ok := JevAnchorFromEntry(entry.NewEntry(entry.WithEntryContent("ordinary"))); ok {
 		t.Fatal("ordinary entry became a Jev candidate")
 	}
 	emptyPayload, err := json.Marshal(entry.HandoffAnchor{
@@ -65,7 +65,7 @@ func TestAnchorKindsHaveSeparateSearchSemantics(t *testing.T) {
 	if _, ok := AnchorFromEntry(emptyAnchor); !ok {
 		t.Fatal("empty-summary rewind anchor was not indexed")
 	}
-	if _, ok := CandidateFromAnchor(emptyAnchor); ok {
+	if _, ok := JevAnchorFromEntry(emptyAnchor); ok {
 		t.Fatal("empty-summary anchor became a Jev candidate")
 	}
 }
@@ -118,7 +118,7 @@ func TestJevFindAllReturnsEmptySliceWithoutCandidates(t *testing.T) {
 	}
 }
 
-func TestJevCandidateLimitKeepsRecentCandidates(t *testing.T) {
+func TestJevSearchesOldAnchorsBeyondRecentOnes(t *testing.T) {
 	t.Parallel()
 
 	store := newSemanticStore(&fakeModel{})
@@ -126,14 +126,14 @@ func TestJevCandidateLimitKeepsRecentCandidates(t *testing.T) {
 	store.add(2, "recent")
 	classifier := &fakeJevClassifier{results: []Classification{{Index: 0, Score: 3, Confidence: 1}}}
 
-	got, err := NewJev("query", classifier).WithCandidateLimit(1).FindAll(context.Background(), store)
+	got, err := NewJev("query", classifier).FindAll(context.Background(), store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(classifier.candidates) != 1 || len(classifier.candidates[0].Decisions) != 1 || classifier.candidates[0].Decisions[0] != "recent" {
+	if len(classifier.candidates) != 2 || classifier.candidates[0].Decisions[0] != "old" {
 		t.Fatalf("classified candidates = %#v", classifier.candidates)
 	}
-	if got[0].Scope != (view.EntryRange{SeqS: entry.SeqFromUint64(2), SeqE: entry.SeqFromUint64(3)}) {
+	if got[0].Scope != (view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)}) {
 		t.Fatalf("scope = %#v", got[0].Scope)
 	}
 }

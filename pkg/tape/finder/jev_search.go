@@ -24,22 +24,14 @@ type JevClassifier interface {
 }
 
 // Jev is a classifier-based search engine. It is intentionally independent of
-// Semantic: candidates go directly from the tape index to the classifier.
+// Semantic: active anchors go directly from the storage snapshot to the classifier.
 type Jev struct {
-	Query          string        `validate:"required"`
-	CandidateLimit int           `validate:"gte=0"`
-	Classifier     JevClassifier `validate:"required"`
+	Query      string        `validate:"required"`
+	Classifier JevClassifier `validate:"required"`
 }
 
 func NewJev(query string, classifier JevClassifier) Jev {
 	return Jev{Query: query, Classifier: classifier}
-}
-
-// WithCandidateLimit limits classification to the most recent candidates.
-// Zero keeps the complete candidate index.
-func (j Jev) WithCandidateLimit(limit int) Jev {
-	j.CandidateLimit = limit
-	return j
 }
 
 func (j Jev) Find(ctx context.Context, tape storage.EntryStorage) (view.EntryView, error) {
@@ -65,17 +57,15 @@ func (j Jev) FindAll(ctx context.Context, tape storage.EntryStorage) ([]view.Ent
 		}
 		indexedTape = unwrapper.Unwrap()
 	}
-	indexer, ok := indexedTape.(CandidateIndexer)
+	indexer, ok := indexedTape.(AnchorSnapshotReader)
 	if !ok {
-		return nil, errors.New("finder: candidate index is not supported")
+		return nil, errors.New("finder: anchor snapshot is not supported")
 	}
-	candidates, err := indexer.CandidateIndex(ctx)
+	snapshot, err := indexer.AnchorSnapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if j.CandidateLimit > 0 && len(candidates) > j.CandidateLimit {
-		candidates = candidates[len(candidates)-j.CandidateLimit:]
-	}
+	candidates := snapshot.Anchors
 	if len(candidates) == 0 {
 		return []view.EntryView{}, nil
 	}

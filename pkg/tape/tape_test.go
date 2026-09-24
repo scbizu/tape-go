@@ -135,17 +135,17 @@ func TestTapeJevAnchoringRunsAfterPrimaryStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	index := base.(interface {
-		CandidateIndex(context.Context) ([]finder.JevAnchorState, error)
+		AnchorSnapshot(context.Context) (finder.AnchorSnapshot, error)
 	})
-	candidates, err := index.CandidateIndex(ctx)
+	snapshot, err := index.AnchorSnapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(candidates) != 1 || candidates[0].Scope != (view.EntryRange{
+	if len(snapshot.Anchors) != 1 || snapshot.Anchors[0].Scope != (view.EntryRange{
 		SeqS: entry.SeqFromUint64(1),
 		SeqE: entry.SeqFromUint64(2),
 	}) {
-		t.Fatalf("candidates = %#v", candidates)
+		t.Fatalf("anchors = %#v", snapshot.Anchors)
 	}
 	if _, err := tape.Rewind(ctx); !errors.Is(err, storage.ErrNoAnchor) {
 		t.Fatalf("full rewind recognized Jev anchor: %v", err)

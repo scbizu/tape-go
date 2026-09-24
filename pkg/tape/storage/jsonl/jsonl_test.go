@@ -98,7 +98,7 @@ func TestJSONLInitCreatesSessionFile(t *testing.T) {
 	}
 }
 
-func TestJSONLCandidateIndex(t *testing.T) {
+func TestJSONLAnchorSnapshot(t *testing.T) {
 	t.Parallel()
 
 	store, err := NewJSONLStorage("session-a", t.TempDir())
@@ -119,14 +119,64 @@ func TestJSONLCandidateIndex(t *testing.T) {
 	if err := store.Store(ctx, entry.NewAnchor(entry.Seq{}, "owner-a", entry.AnchorKindJev, payload)); err != nil {
 		t.Fatal(err)
 	}
-	items, err := store.CandidateIndex(ctx)
+	snapshot, err := store.AnchorSnapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	items := snapshot.Anchors
 	if len(items) != 1 || items[0].Seq != seq(2) || len(items[0].State.Decisions) != 1 || items[0].State.Decisions[0] != "searchable" ||
 		items[0].Scope != (view.EntryRange{SeqS: seq(1), SeqE: seq(2)}) {
-		t.Fatalf("CandidateIndex = %#v", items)
+		t.Fatalf("AnchorSnapshot = %#v", items)
 	}
+}
+
+func TestJSONLAnchorSnapshotRebuildsReplacement(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ctx := owner.WithOwnerId(context.Background(), "owner-a")
+	store, err := NewJSONLStorage("session-a", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, anchor := range []entry.JevAnchor{
+		{State: entry.JevMemoryState{Decisions: []string{"old"}}, SeqS: seq(1), SeqE: seq(2)},
+		{State: entry.JevMemoryState{Decisions: []string{"unrelated"}}, SeqS: seq(2), SeqE: seq(3)},
+		{State: entry.JevMemoryState{Decisions: []string{"replacement"}}, SeqS: seq(3), SeqE: seq(4), Replaces: []entry.Seq{seq(1)}},
+	} {
+		e, err := entry.NewJevAnchor(entry.Seq{}, "owner-a", anchor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Store(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(s *JSONL) {
+		t.Helper()
+		snapshot, err := s.AnchorSnapshot(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(snapshot.Anchors) != 2 || snapshot.Anchors[0].Seq != seq(2) || snapshot.Anchors[1].Seq != seq(3) {
+			t.Fatalf("active anchors = %#v", snapshot.Anchors)
+		}
+		old, err := s.Range(ctx, view.EntryRange{SeqS: seq(1), SeqE: seq(2)})
+		if err != nil || len(old.Raw) != 1 {
+			t.Fatalf("replaced anchor missing from tape: %#v, %v", old, err)
+		}
+	}
+	check(store)
+	reloaded, err := NewJSONLStorage("session-a", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reloaded.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	check(reloaded)
 }
 
 func TestJSONLInitIsIdempotentForSameInstance(t *testing.T) {

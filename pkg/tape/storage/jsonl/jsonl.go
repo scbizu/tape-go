@@ -27,7 +27,7 @@ import (
 )
 
 var _ storage.TapeStorage = (*JSONL)(nil)
-var _ finder.CandidateIndexer = (*JSONL)(nil)
+var _ finder.AnchorSnapshotReader = (*JSONL)(nil)
 
 func NewJSONLStorage(sessionId string, lp string) (*JSONL, error) {
 	if lp == "" {
@@ -60,6 +60,7 @@ type ownerJSONL struct {
 	lastEntryId    entry.Seq
 	lastTimestamp  time.Time
 	indexes        []JSONLIndex
+	anchorSnapshot finder.AnchorSnapshot
 	semanticModel  llm.Model
 	semanticIndex  []finder.SemanticItem
 	semanticEnable bool
@@ -180,6 +181,19 @@ func (j *JSONL) Init(
 			indexes = append(indexes, index)
 		}
 		state.indexes = indexes
+		state.anchorSnapshot = finder.AnchorSnapshot{}
+		var anchors []finder.JevAnchorRecord
+		for _, index := range indexes {
+			for _, anchor := range index.anchors {
+				if anchor.Kind == entry.AnchorKindJev {
+					anchors = append(anchors, anchor.JevAnchorRecord)
+				}
+			}
+		}
+		slices.SortFunc(anchors, func(a, b finder.JevAnchorRecord) int { return a.Seq.Cmp(b.Seq) })
+		for _, anchor := range anchors {
+			state.anchorSnapshot.Apply(anchor)
+		}
 		state.semanticModel = nil
 		state.semanticIndex = nil
 		state.semanticEnable = false
@@ -271,6 +285,9 @@ func (j *JSONL) Store(
 	state.lastTimestamp = timestamp
 	if anchor, ok := finder.AnchorFromEntry(e); ok {
 		index.anchors = append(index.anchors, anchor)
+		if anchor.Kind == entry.AnchorKindJev {
+			state.anchorSnapshot.Apply(anchor.JevAnchorRecord)
+		}
 	}
 	if state.semanticEnable {
 		item, ok := semanticItem(ctx, state.semanticModel, e)
@@ -510,22 +527,14 @@ func (j *JSONL) SemanticIndex(ctx context.Context) (finder.SemanticIndex, error)
 	return finder.SemanticIndex{Model: model, Items: items}, nil
 }
 
-func (j *JSONL) CandidateIndex(ctx context.Context) ([]finder.JevAnchorState, error) {
+func (j *JSONL) AnchorSnapshot(ctx context.Context) (finder.AnchorSnapshot, error) {
 	_, state, err := j.ownerState(ctx, false)
 	if err != nil {
-		return nil, fmt.Errorf("jsonl: %w", err)
+		return finder.AnchorSnapshot{}, fmt.Errorf("jsonl: %w", err)
 	}
 	state.RLock()
 	defer state.RUnlock()
-	var items []finder.JevAnchorState
-	for _, index := range state.indexes {
-		for _, anchor := range index.anchors {
-			if anchor.Kind == entry.AnchorKindJev && !anchor.State.IsZero() {
-				items = append(items, anchor.JevAnchorState)
-			}
-		}
-	}
-	return items, nil
+	return state.anchorSnapshot.Clone(), nil
 }
 
 func (j *JSONL) semanticIndexForPath(ctx context.Context, model llm.Model, path string) ([]finder.SemanticItem, error) {
