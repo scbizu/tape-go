@@ -113,8 +113,8 @@ func (m *Model) Summarize(ctx context.Context, projection finder.JevViewProjecti
 			{
 				Role: deepseek.ChatMessageRoleSystem,
 				Content: "Summarize the supplied tape view faithfully and compactly as a JSON object for future Jev retrieval. " +
-					"Return exactly these fields: overview (string), facts, decisions, constraints, preferences, results, and unresolved_work (arrays of strings). " +
-					"The decisions array must contain at least one durable retrieval decision; use empty arrays when another category has no content. Preserve concrete names and values. " +
+					"Return one field: decisions (array of strings). Each decision must be a self-contained statement of durable information worth retrieving later, including concrete facts, constraints, preferences, results, or unfinished work when present. " +
+					"Include at least one decision and preserve concrete names and values. " +
 					"Do not infer or add information that is not present. Return JSON only.",
 			},
 			{Role: deepseek.ChatMessageRoleUser, Content: string(state)},

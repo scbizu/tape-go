@@ -63,16 +63,9 @@ type HandoffAnchor struct {
 	SeqS, SeqE Seq
 }
 
-// JevMemoryState is the structured memory representation generated for Jev.
-// A usable state always carries at least one retrieval decision.
+// JevMemoryState holds concrete retrieval decisions generated for Jev.
 type JevMemoryState struct {
-	Overview       string   `json:"overview"`
-	Facts          []string `json:"facts"`
-	Decisions      []string `json:"decisions"`
-	Constraints    []string `json:"constraints"`
-	Preferences    []string `json:"preferences"`
-	Results        []string `json:"results"`
-	UnresolvedWork []string `json:"unresolved_work"`
+	Decisions []string `json:"decisions"`
 }
 
 func (s JevMemoryState) IsZero() bool {

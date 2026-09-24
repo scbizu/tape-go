@@ -72,9 +72,7 @@ func TestJevAnchorPolicyCreatesJevAnchor(t *testing.T) {
 	t.Parallel()
 
 	memoryState := fixedSummarizer{
-		Overview:  "Database region: Tokyo.",
-		Facts:     []string{"Production database region is Tokyo."},
-		Decisions: []string{"Retain the production database region."},
+		Decisions: []string{"The production database region is Tokyo."},
 	}
 	policy := NewJevAnchorPolicy(fixedAnchorDecider(.9), memoryState, .7)
 	latest := entry.NewEntry(
@@ -101,7 +99,7 @@ func TestJevAnchorPolicyCreatesJevAnchor(t *testing.T) {
 	if err := json.Unmarshal([]byte(anchor.GetSummary()), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.State.Overview != "Database region: Tokyo." ||
+	if len(payload.State.Decisions) != 1 || payload.State.Decisions[0] != "The production database region is Tokyo." ||
 		payload.SeqS != entry.SeqFromUint64(4) ||
 		payload.SeqE != entry.SeqFromUint64(5) {
 		t.Fatalf("payload = %#v", payload)

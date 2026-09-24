@@ -153,9 +153,7 @@ func TestModelEmbeddingUnsupported(t *testing.T) {
 func TestModelSummarize(t *testing.T) {
 	client := &fakeClient{response: &deepseek.ChatCompletionResponse{
 		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: `{
-			"overview":"concise memory",
-			"facts":["database region is Tokyo"],
-			"decisions":["retain the database region"],"constraints":[],"preferences":[],"results":[],"unresolved_work":[]
+			"decisions":["The production database region is Tokyo."]
 		}`}}},
 	}}
 	llm := &Model{client: client, name: "deepseek-test"}
@@ -171,7 +169,7 @@ func TestModelSummarize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Overview != "concise memory" || len(got.Facts) != 1 || got.Facts[0] != "database region is Tokyo" {
+	if len(got.Decisions) != 1 || got.Decisions[0] != "The production database region is Tokyo." {
 		t.Fatalf("Summarize = %#v", got)
 	}
 	if client.request == nil || len(client.request.Messages) != 2 || client.request.Temperature != 0 ||
@@ -182,7 +180,7 @@ func TestModelSummarize(t *testing.T) {
 
 func TestModelSummarizeRejectsStateWithoutDecision(t *testing.T) {
 	client := &fakeClient{response: &deepseek.ChatCompletionResponse{
-		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: `{"overview":"fact only","facts":["database region is Tokyo"]}`}}},
+		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: `{"decisions":[]}`}}},
 	}}
 	llm := &Model{client: client, name: "deepseek-test"}
 	memory := view.EntryView{Raw: []entry.EntryLike{entry.NewEntry(entry.WithEntryContent("fact"))}}
