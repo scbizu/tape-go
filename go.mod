@@ -9,6 +9,7 @@ require (
 	github.com/go-playground/validator/v10 v10.30.2
 	github.com/google/jsonschema-go v0.4.2
 	github.com/hashicorp/go-retryablehttp v0.7.8
+	github.com/huandu/go-clone/generic v1.7.3
 	github.com/simonfrey/jsonl v0.0.0-20240904112901-935399b9a740
 	github.com/spf13/afero v1.15.0
 	go.etcd.io/bbolt v1.5.0
@@ -43,6 +44,7 @@ require (
 	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
 	github.com/hashicorp/go-memdb v1.3.4 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
+	github.com/huandu/go-clone v1.7.3 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect

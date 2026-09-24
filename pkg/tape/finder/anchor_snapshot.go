@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"slices"
 
+	generic "github.com/huandu/go-clone/generic"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
@@ -25,18 +26,7 @@ type AnchorSnapshot struct {
 
 // Clone returns an independent snapshot for callers outside the storage lock.
 func (s AnchorSnapshot) Clone() AnchorSnapshot {
-	out := AnchorSnapshot{Anchors: make([]JevAnchorRecord, len(s.Anchors))}
-	for i, anchor := range s.Anchors {
-		anchor.Replaces = slices.Clone(anchor.Replaces)
-		anchor.State.Facts = slices.Clone(anchor.State.Facts)
-		anchor.State.Decisions = slices.Clone(anchor.State.Decisions)
-		anchor.State.Constraints = slices.Clone(anchor.State.Constraints)
-		anchor.State.Preferences = slices.Clone(anchor.State.Preferences)
-		anchor.State.Results = slices.Clone(anchor.State.Results)
-		anchor.State.UnresolvedWork = slices.Clone(anchor.State.UnresolvedWork)
-		out.Anchors[i] = anchor
-	}
-	return out
+	return generic.Clone(s)
 }
 
 // Apply folds one stored anchor into the active snapshot.
