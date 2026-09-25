@@ -9,6 +9,10 @@ import (
 	deepseek "github.com/cohesion-org/deepseek-go"
 	"google.golang.org/genai"
 
+	"github.com/scbizu/tape-go/pkg/tape/entry"
+	"github.com/scbizu/tape-go/pkg/tape/finder"
+	"github.com/scbizu/tape-go/pkg/tape/view"
+
 	"google.golang.org/adk/model"
 )
 
@@ -143,6 +147,49 @@ func TestModelEmbeddingUnsupported(t *testing.T) {
 	llm := &Model{client: &fakeClient{}, name: "deepseek-test"}
 	if _, err := llm.Embedding(context.Background(), "text"); !errors.Is(err, ErrEmbeddingUnsupported) {
 		t.Fatalf("Embedding error: want ErrEmbeddingUnsupported, got %v", err)
+	}
+}
+
+func TestModelSummarize(t *testing.T) {
+	client := &fakeClient{response: &deepseek.ChatCompletionResponse{
+		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: `{
+			"decisions":["The production database region is Tokyo."]
+		}`}}},
+	}}
+	llm := &Model{client: client, name: "deepseek-test"}
+	memory := view.EntryView{
+		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
+		Raw:   []entry.EntryLike{entry.NewEntry(entry.WithEntryContent("fact"))},
+	}
+	projection, err := finder.ProjectJevView(memory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := llm.Summarize(context.Background(), projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Decisions) != 1 || got.Decisions[0] != "The production database region is Tokyo." {
+		t.Fatalf("Summarize = %#v", got)
+	}
+	if client.request == nil || len(client.request.Messages) != 2 || client.request.Temperature != 0 ||
+		client.request.ResponseFormat == nil || client.request.ResponseFormat.Type != "json_object" {
+		t.Fatalf("unexpected request: %#v", client.request)
+	}
+}
+
+func TestModelSummarizeRejectsStateWithoutDecision(t *testing.T) {
+	client := &fakeClient{response: &deepseek.ChatCompletionResponse{
+		Choices: []deepseek.Choice{{Message: deepseek.Message{Content: `{"decisions":[]}`}}},
+	}}
+	llm := &Model{client: client, name: "deepseek-test"}
+	memory := view.EntryView{Raw: []entry.EntryLike{entry.NewEntry(entry.WithEntryContent("fact"))}}
+	projection, err := finder.ProjectJevView(memory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := llm.Summarize(context.Background(), projection); err == nil {
+		t.Fatal("Summarize accepted Jev memory state without a decision")
 	}
 }
 

@@ -26,7 +26,7 @@ type Tape struct {
 	storage.TapeStorage
 
 	OwnerID string
-	View    view.EntryRange
+	View    view.EntryView
 
 	readSeq entry.Seq
 	readBuf *bytes.Reader
@@ -68,10 +68,10 @@ func (t *Tape) Write(p []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if err := t.Store(t.context(), e); err != nil {
+	if err := t.TapeStorage.Store(t.context(), e); err != nil {
 		return 0, err
 	}
-	t.View.SeqE = entry.Seq{}
+	t.View.Scope.SeqE = entry.Seq{}
 	t.readBuf = nil
 	return len(p), nil
 }
@@ -87,7 +87,7 @@ func (t *Tape) Close() error {
 }
 
 func (t *Tape) SetView(r view.EntryRange) {
-	t.View = r
+	t.View.Scope = r
 	t.resetReadState()
 }
 
@@ -97,17 +97,17 @@ func (t *Tape) context() context.Context {
 
 func (t *Tape) nextEntryView() error {
 	ctx := t.context()
-	if t.View.SeqE.IsZero() {
+	if t.View.Scope.SeqE.IsZero() {
 		tv, err := t.Get(ctx)
 		if err != nil {
 			return err
 		}
-		t.View.SeqE = tv.Scope.SeqE.Next()
+		t.View.Scope.SeqE = tv.Scope.SeqE.Next()
 	}
 	if t.readSeq.IsZero() {
-		t.readSeq = t.View.SeqS
+		t.readSeq = t.View.Scope.SeqS
 	}
-	if t.readSeq.Cmp(t.View.SeqE) >= 0 {
+	if t.readSeq.Cmp(t.View.Scope.SeqE) >= 0 {
 		return io.EOF
 	}
 

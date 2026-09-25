@@ -59,7 +59,7 @@ func (c handoffCommand) Run(ctx context.Context, _ tapeagent.AgentIO, call tapea
 	anchorSeq := tv.Scope.SeqE.Next()
 	anchor := entry.HandoffAnchor{
 		Summary: args.Summary,
-		SeqS:    c.tape.View.SeqS,
+		SeqS:    c.tape.View.Scope.SeqS,
 		SeqE:    anchorSeq,
 	}
 	if anchor.SeqS.IsZero() {
