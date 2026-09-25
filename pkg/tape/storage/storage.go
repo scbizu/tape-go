@@ -13,8 +13,16 @@ import (
 var ErrNoAnchor = errors.New("storage: no anchor")
 
 type EntryStorage interface {
+	// Deprecated: use StoreWithResult when the storage supports it. Store is
+	// retained for callers that only need an error.
 	Store(context.Context, entry.EntryLike) error
 	Range(context.Context, view.EntryRange, ...RangeBy) (view.EntryView, error)
+}
+
+// StoreResultStorage reports the entry as it was persisted, including an ID
+// assigned by the storage.
+type StoreResultStorage interface {
+	StoreWithResult(context.Context, entry.EntryLike) (entry.EntryLike, error)
 }
 
 type TapeStorage interface {
@@ -29,6 +37,7 @@ type TapeStorage interface {
 	//
 	// TapeStorage should also hold the storage of entries
 	EntryStorage
+	StoreResultStorage
 }
 
 type SessionID string

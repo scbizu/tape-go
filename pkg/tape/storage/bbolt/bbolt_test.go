@@ -23,8 +23,12 @@ func TestBboltStoreGetRange(t *testing.T) {
 	store, ctx := newStore(t, "owner-a", "session-a")
 	defer store.Close()
 
-	if err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent("hello"))); err != nil {
+	stored, err := store.StoreWithResult(ctx, entry.NewEntry(entry.WithEntryContent("hello")))
+	if err != nil {
 		t.Fatal(err)
+	}
+	if stored.GetID() != seq(1) {
+		t.Fatalf("stored entry ID = %s, want 1", stored.GetID())
 	}
 	tv, err := store.Get(ctx)
 	if err != nil {

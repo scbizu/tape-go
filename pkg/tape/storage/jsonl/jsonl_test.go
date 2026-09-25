@@ -109,8 +109,12 @@ func TestJSONLAnchorSnapshot(t *testing.T) {
 	if err := store.Init(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent("ordinary"))); err != nil {
+	stored, err := store.StoreWithResult(ctx, entry.NewEntry(entry.WithEntryContent("ordinary")))
+	if err != nil {
 		t.Fatal(err)
+	}
+	if stored.GetID() != seq(1) {
+		t.Fatalf("stored entry ID = %s, want 1", stored.GetID())
 	}
 	payload, err := json.Marshal(entry.JevAnchor{State: entry.JevMemoryState{Decisions: []string{"searchable"}}, SeqS: seq(1), SeqE: seq(2)})
 	if err != nil {

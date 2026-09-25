@@ -27,6 +27,7 @@ import (
 )
 
 var _ storage.TapeStorage = (*JSONL)(nil)
+var _ storage.StoreResultStorage = (*JSONL)(nil)
 var _ finder.AnchorSnapshotReader = (*JSONL)(nil)
 
 func NewJSONLStorage(sessionId string, lp string) (*JSONL, error) {
@@ -237,22 +238,29 @@ func (j *JSONL) Get(
 	}, nil
 }
 
+// Store is retained for callers that only need an error.
+// Deprecated: use StoreWithResult.
 func (j *JSONL) Store(
 	ctx context.Context,
 	e entry.EntryLike,
 ) error {
+	_, err := j.StoreWithResult(ctx, e)
+	return err
+}
+
+func (j *JSONL) StoreWithResult(ctx context.Context, e entry.EntryLike) (entry.EntryLike, error) {
 	if e == nil {
-		return errors.New("jsonl: nil entry")
+		return nil, errors.New("jsonl: nil entry")
 	}
 	_, state, err := j.ownerState(ctx, false)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	state.Lock()
 	defer state.Unlock()
 
 	if len(state.indexes) == 0 {
-		return errors.New("jsonl: no index to store")
+		return nil, errors.New("jsonl: no index to store")
 	}
 	if e.GetID().IsZero() {
 		e = e.WithID(state.lastEntryId.Next())
@@ -269,11 +277,11 @@ func (j *JSONL) Store(
 	// append e to the file
 	fd, err := j.OpenFile(index.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		return fmt.Errorf("jsonl: open file: %w", err)
+		return nil, fmt.Errorf("jsonl: open file: %w", err)
 	}
 	defer fd.Close()
 	if err := jsonlines.NewWriter(fd).Write(e); err != nil {
-		return fmt.Errorf("jsonl: encodes entry to storage failed: %w", err)
+		return nil, fmt.Errorf("jsonl: encodes entry to storage failed: %w", err)
 	}
 	if index.Entries == 0 {
 		index.Scope.SeqS = e.GetID()
@@ -295,7 +303,7 @@ func (j *JSONL) Store(
 			state.semanticIndex = append(state.semanticIndex, item)
 		}
 	}
-	return nil
+	return e, nil
 }
 
 func buildJSONLIndex(fs afero.Fs, path string) (JSONLIndex, error) {

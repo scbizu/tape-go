@@ -37,29 +37,38 @@ func (s *AnchoringStorage) Close() error {
 	return nil
 }
 
+// Store is retained for callers that only need an error.
+// Deprecated: use StoreWithResult.
 func (s *AnchoringStorage) Store(ctx context.Context, e entry.EntryLike) error {
+	_, err := s.StoreWithResult(ctx, e)
+	return err
+}
+
+func (s *AnchoringStorage) StoreWithResult(ctx context.Context, e entry.EntryLike) (entry.EntryLike, error) {
 	if s.View == nil || e == nil || e.GetKind().IsAnchor() {
-		return s.TapeStorage.Store(ctx, e)
+		return s.TapeStorage.StoreWithResult(ctx, e)
 	}
 	active := *s.View
 	if active.AnchorMaker == nil {
-		return s.TapeStorage.Store(ctx, e)
+		return s.TapeStorage.StoreWithResult(ctx, e)
 	}
 
 	s.mu.Lock()
-	if err := s.TapeStorage.Store(ctx, e); err != nil {
+	stored, err := s.TapeStorage.StoreWithResult(ctx, e)
+	if err != nil {
 		s.mu.Unlock()
-		return err
+		return nil, err
 	}
-	seq := e.GetID()
+	if stored == nil {
+		s.mu.Unlock()
+		s.report(errors.New("storage: store returned nil entry"))
+		return e, nil
+	}
+	seq := stored.GetID()
 	if seq.IsZero() {
-		tv, err := s.TapeStorage.Get(ctx)
-		if err != nil {
-			s.mu.Unlock()
-			s.report(fmt.Errorf("storage: resolve anchor scope: %w", err))
-			return nil
-		}
-		seq = tv.Scope.SeqE
+		s.mu.Unlock()
+		s.report(errors.New("storage: cannot anchor entry without a known stored ID"))
+		return stored, nil
 	}
 	s.mu.Unlock()
 
@@ -73,28 +82,28 @@ func (s *AnchoringStorage) Store(ctx context.Context, e entry.EntryLike) error {
 	memory, err := s.TapeStorage.Range(ctx, view.EntryRange{SeqS: start, SeqE: seq.Next()})
 	if err != nil {
 		s.report(fmt.Errorf("storage: assemble anchor view: %w", err))
-		return nil
+		return stored, nil
 	}
 	memory.AnchorMaker = active.AnchorMaker
-	anchor, ok, err := memory.MakeAnchor(ctx, e)
+	anchor, ok, err := memory.MakeAnchor(ctx, stored)
 	if err != nil {
 		s.report(fmt.Errorf("storage: anchor policy: %w", err))
-		return nil
+		return stored, nil
 	}
 	if !ok {
-		return nil
+		return stored, nil
 	}
 	if anchor == nil {
 		s.report(errors.New("storage: anchor maker returned nil anchor"))
-		return nil
+		return stored, nil
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.TapeStorage.Store(ctx, anchor); err != nil {
+	if _, err := s.TapeStorage.StoreWithResult(ctx, anchor); err != nil {
 		s.report(fmt.Errorf("storage: store derived anchor: %w", err))
 	}
-	return nil
+	return stored, nil
 }
 
 func (s *AnchoringStorage) report(err error) {

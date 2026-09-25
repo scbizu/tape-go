@@ -218,8 +218,13 @@ func (noopStorage) Get(context.Context) (view.TapeView, error) {
 	return view.TapeView{}, nil
 }
 
-func (noopStorage) Store(context.Context, entry.EntryLike) error {
-	return nil
+func (s noopStorage) Store(ctx context.Context, e entry.EntryLike) error {
+	_, err := s.StoreWithResult(ctx, e)
+	return err
+}
+
+func (noopStorage) StoreWithResult(_ context.Context, e entry.EntryLike) (entry.EntryLike, error) {
+	return e, nil
 }
 
 func (noopStorage) Range(context.Context, view.EntryRange, ...storage.RangeBy) (view.EntryView, error) {

@@ -23,6 +23,7 @@ import (
 )
 
 var _ storage.TapeStorage = (*Bbolt)(nil)
+var _ storage.StoreResultStorage = (*Bbolt)(nil)
 var _ finder.AnchorSnapshotReader = (*Bbolt)(nil)
 
 var (
@@ -134,18 +135,25 @@ func (b *Bbolt) Get(ctx context.Context) (view.TapeView, error) {
 	}, nil
 }
 
+// Store is retained for callers that only need an error.
+// Deprecated: use StoreWithResult.
 func (b *Bbolt) Store(ctx context.Context, e entry.EntryLike) error {
+	_, err := b.StoreWithResult(ctx, e)
+	return err
+}
+
+func (b *Bbolt) StoreWithResult(ctx context.Context, e entry.EntryLike) (entry.EntryLike, error) {
 	if e == nil {
-		return errors.New("bbolt: nil entry")
+		return nil, errors.New("bbolt: nil entry")
 	}
 	ownerID, err := owner.GetOwnerId(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if b.db == nil {
-		return errors.New("bbolt: storage is not initialized")
+		return nil, errors.New("bbolt: storage is not initialized")
 	}
-	return b.db.Update(func(tx *bolt.Tx) error {
+	err = b.db.Update(func(tx *bolt.Tx) error {
 		entries, err := sessionBucket(tx, entriesBucket, ownerID, b.sessionID, true)
 		if err != nil {
 			return err
@@ -201,6 +209,10 @@ func (b *Bbolt) Store(ctx context.Context, e entry.EntryLike) error {
 		state.LastTimestamp = timestamp
 		return putMeta(meta, state)
 	})
+	if err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
 func (b *Bbolt) Range(ctx context.Context, r view.EntryRange, opts ...storage.RangeBy) (view.EntryView, error) {
