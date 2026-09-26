@@ -17,7 +17,7 @@ import (
 
 func TestHandoffCommandDefault(t *testing.T) {
 	tape, ctx := newToolTestTape(t)
-	if err := tape.Store(ctx, entry.NewEntry(
+	if _, err := tape.Store(ctx, entry.NewEntry(
 		entry.WithEntryKind(entry.EntryUser),
 		entry.WithEntryContent("first"),
 	)); err != nil {
@@ -35,7 +35,7 @@ func TestHandoffCommandDefault(t *testing.T) {
 
 func TestHandoffCommandArgs(t *testing.T) {
 	tape, ctx := newToolTestTape(t)
-	if err := tape.Store(ctx, entry.NewEntry(
+	if _, err := tape.Store(ctx, entry.NewEntry(
 		entry.WithEntryKind(entry.EntryUser),
 		entry.WithEntryContent("first"),
 	)); err != nil {

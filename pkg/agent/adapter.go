@@ -21,7 +21,6 @@ import (
 
 	"github.com/scbizu/tape-go/pkg/tape"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
-	"github.com/scbizu/tape-go/pkg/tape/finder"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
@@ -39,24 +38,10 @@ type TapeAdapter struct {
 	Tape    *tape.Tape
 	AppName string
 
-	state        *tapeState
-	memoryFinder func(string) finder.Engine
+	state *tapeState
 }
 
 type TapeAdapterOption func(*TapeAdapter) error
-
-// WithMemoryFinder configures the search engine used by SearchMemory. The
-// factory receives each request query and may return Semantic, Jev, or another
-// finder.Engine implementation.
-func WithMemoryFinder(factory func(string) finder.Engine) TapeAdapterOption {
-	return func(adapter *TapeAdapter) error {
-		if factory == nil {
-			return errors.New("agent: nil memory finder")
-		}
-		adapter.memoryFinder = factory
-		return nil
-	}
-}
 
 func NewTapeAdapter(t *tape.Tape, appName string, opts ...TapeAdapterOption) (*TapeAdapter, error) {
 	if t == nil {
@@ -158,7 +143,7 @@ func (a *TapeAdapter) AppendEvent(ctx context.Context, current session.Session, 
 		),
 		Extensions: map[string]any{adkEventExtension: string(payload)},
 	}
-	if err := a.Tape.Store(a.tapeContext(ctx), e); err != nil {
+	if _, err := a.Tape.Store(a.tapeContext(ctx), e); err != nil {
 		return fmt.Errorf("agent: store ADK event: %w", err)
 	}
 	a.applyStateDelta(event.Actions.StateDelta)
@@ -176,14 +161,7 @@ func (a *TapeAdapter) SearchMemory(ctx context.Context, req *memory.SearchReques
 	if err := a.validateIdentity(ctx, req.AppName, req.UserID, ""); err != nil {
 		return nil, err
 	}
-	var search finder.Engine = finder.SemanticPrompt(req.Query)
-	if a.memoryFinder != nil {
-		search = a.memoryFinder(req.Query)
-		if search == nil {
-			return nil, errors.New("agent: memory finder returned nil engine")
-		}
-	}
-	entries, err := search.Find(a.tapeContext(ctx), a.Tape)
+	entries, err := a.Tape.Find(a.tapeContext(ctx), req.Query)
 	if err != nil {
 		return nil, err
 	}

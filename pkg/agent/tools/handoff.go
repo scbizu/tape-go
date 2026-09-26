@@ -83,7 +83,7 @@ func (c handoffCommand) Run(ctx context.Context, _ tapeagent.AgentIO, call tapea
 	if err != nil {
 		return tapeagent.CommandResult{}, fmt.Errorf("tape: marshal handoff anchor: %w", err)
 	}
-	if err := c.tape.Store(
+	if _, err := c.tape.Store(
 		tapeCtx,
 		entry.NewAnchor(anchorSeq, tv.Owner, entry.AnchorKindHandoff, payload),
 	); err != nil {

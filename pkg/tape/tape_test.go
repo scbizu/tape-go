@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"iter"
 	"testing"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
-	"github.com/scbizu/tape-go/pkg/tape/finder"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/jsonl"
@@ -90,68 +90,6 @@ func TestTapeCloseDelegatesToUnderlyingCloser(t *testing.T) {
 	}
 }
 
-type anchorMakerFunc func(context.Context, entry.EntryLike, view.EntryView) (entry.EntryLike, bool, error)
-
-func (f anchorMakerFunc) MakeAnchor(ctx context.Context, e entry.EntryLike, memory view.EntryView) (entry.EntryLike, bool, error) {
-	return f(ctx, e, memory)
-}
-
-func TestTapeSetViewPreservesAnchorMaker(t *testing.T) {
-	t.Parallel()
-
-	maker := anchorMakerFunc(func(context.Context, entry.EntryLike, view.EntryView) (entry.EntryLike, bool, error) {
-		return nil, false, nil
-	})
-	tape := &Tape{View: view.EntryView{AnchorMaker: maker}}
-	tape.SetView(view.EntryRange{SeqS: entry.SeqFromUint64(3)})
-
-	if tape.View.AnchorMaker == nil {
-		t.Fatal("SetView cleared the view's AnchorMaker")
-	}
-	if tape.View.Scope.SeqS != entry.SeqFromUint64(3) {
-		t.Fatalf("view start = %s, want 3", tape.View.Scope.SeqS)
-	}
-}
-
-func TestTapeJevAnchoringRunsAfterPrimaryStore(t *testing.T) {
-	t.Parallel()
-
-	tape := newMemoryTape(t, "owner-a", "session-a")
-	tape.View.AnchorMaker = anchorMakerFunc(func(_ context.Context, e entry.EntryLike, memory view.EntryView) (entry.EntryLike, bool, error) {
-		if len(memory.Raw) != 1 || memory.Raw[0].GetSummary() != "durable" {
-			t.Fatalf("primary entry was not stored before Jev decision: %#v", memory.Raw)
-		}
-		payload, _ := json.Marshal(entry.JevAnchor{
-			State: entry.JevMemoryState{Decisions: []string{"durable"}},
-			SeqS:  memory.Scope.SeqS,
-			SeqE:  memory.Scope.SeqE,
-		})
-		return entry.NewAnchor(entry.Seq{}, e.GetOwner(), entry.AnchorKindJev, payload), true, nil
-	})
-	base := tape.TapeStorage
-	tape.TapeStorage = storage.NewAnchoringStorage(base, &tape.View, nil)
-	ctx := owner.WithOwnerId(context.Background(), "owner-a")
-	if err := tape.Store(ctx, entry.NewEntry(entry.WithEntryContent("durable"), entry.WithEntryOwner("owner-a"))); err != nil {
-		t.Fatal(err)
-	}
-	index := base.(interface {
-		AnchorSnapshot(context.Context) (finder.AnchorSnapshot, error)
-	})
-	snapshot, err := index.AnchorSnapshot(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snapshot.Anchors) != 1 || snapshot.Anchors[0].Scope != (view.EntryRange{
-		SeqS: entry.SeqFromUint64(1),
-		SeqE: entry.SeqFromUint64(2),
-	}) {
-		t.Fatalf("anchors = %#v", snapshot.Anchors)
-	}
-	if _, err := tape.Rewind(ctx); !errors.Is(err, storage.ErrNoAnchor) {
-		t.Fatalf("full rewind recognized Jev anchor: %v", err)
-	}
-}
-
 func newMemoryTape(t *testing.T, ownerID, sessionID string) *Tape {
 	t.Helper()
 
@@ -210,6 +148,10 @@ func decodeEntryViews(t *testing.T, data []byte) []entry.Entry {
 
 type noopStorage struct{}
 
+func (noopStorage) Anchors(context.Context) iter.Seq2[entry.EntryLike, error] {
+	return func(func(entry.EntryLike, error) bool) {}
+}
+
 func (noopStorage) Init(context.Context) error {
 	return nil
 }
@@ -218,12 +160,7 @@ func (noopStorage) Get(context.Context) (view.TapeView, error) {
 	return view.TapeView{}, nil
 }
 
-func (s noopStorage) Store(ctx context.Context, e entry.EntryLike) error {
-	_, err := s.StoreWithResult(ctx, e)
-	return err
-}
-
-func (noopStorage) StoreWithResult(_ context.Context, e entry.EntryLike) (entry.EntryLike, error) {
+func (noopStorage) Store(_ context.Context, e entry.EntryLike) (entry.EntryLike, error) {
 	return e, nil
 }
 

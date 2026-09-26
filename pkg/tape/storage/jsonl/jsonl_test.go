@@ -98,43 +98,7 @@ func TestJSONLInitCreatesSessionFile(t *testing.T) {
 	}
 }
 
-func TestJSONLAnchorSnapshot(t *testing.T) {
-	t.Parallel()
-
-	store, err := NewJSONLStorage("session-a", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := owner.WithOwnerId(context.Background(), "owner-a")
-	if err := store.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-	stored, err := store.StoreWithResult(ctx, entry.NewEntry(entry.WithEntryContent("ordinary")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stored.GetID() != seq(1) {
-		t.Fatalf("stored entry ID = %s, want 1", stored.GetID())
-	}
-	payload, err := json.Marshal(entry.JevAnchor{State: entry.JevMemoryState{Decisions: []string{"searchable"}}, SeqS: seq(1), SeqE: seq(2)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Store(ctx, entry.NewAnchor(entry.Seq{}, "owner-a", entry.AnchorKindJev, payload)); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := store.AnchorSnapshot(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	items := snapshot.Anchors
-	if len(items) != 1 || items[0].Seq != seq(2) || len(items[0].State.Decisions) != 1 || items[0].State.Decisions[0] != "searchable" ||
-		items[0].Scope != (view.EntryRange{SeqS: seq(1), SeqE: seq(2)}) {
-		t.Fatalf("AnchorSnapshot = %#v", items)
-	}
-}
-
-func TestJSONLAnchorSnapshotRebuildsReplacement(t *testing.T) {
+func TestJSONLEnumeratesPersistedAnchors(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	ctx := owner.WithOwnerId(context.Background(), "owner-a")
@@ -145,34 +109,32 @@ func TestJSONLAnchorSnapshotRebuildsReplacement(t *testing.T) {
 	if err := store.Init(ctx); err != nil {
 		t.Fatal(err)
 	}
-	for _, anchor := range []entry.JevAnchor{
-		{State: entry.JevMemoryState{Decisions: []string{"old"}}, SeqS: seq(1), SeqE: seq(2)},
-		{State: entry.JevMemoryState{Decisions: []string{"unrelated"}}, SeqS: seq(2), SeqE: seq(3)},
-		{State: entry.JevMemoryState{Decisions: []string{"replacement"}}, SeqS: seq(3), SeqE: seq(4), Replaces: []entry.Seq{seq(1)}},
-	} {
-		e, err := entry.NewJevAnchor(entry.Seq{}, "owner-a", anchor)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := store.Store(ctx, e); err != nil {
+	for _, kind := range []entry.AnchorKind{entry.AnchorKindHandoff, entry.AnchorKindCustom} {
+		if _, err := store.Store(ctx, entry.NewAnchor(entry.Seq{}, "owner-a", kind, json.RawMessage(`{}`))); err != nil {
 			t.Fatal(err)
 		}
 	}
 	check := func(s *JSONL) {
 		t.Helper()
-		snapshot, err := s.AnchorSnapshot(ctx)
-		if err != nil {
-			t.Fatal(err)
+		var ids []entry.Seq
+		for anchor, err := range s.Anchors(ctx) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids = append(ids, anchor.GetID())
 		}
-		if len(snapshot.Anchors) != 2 || snapshot.Anchors[0].Seq != seq(2) || snapshot.Anchors[1].Seq != seq(3) {
-			t.Fatalf("active anchors = %#v", snapshot.Anchors)
-		}
-		old, err := s.Range(ctx, view.EntryRange{SeqS: seq(1), SeqE: seq(2)})
-		if err != nil || len(old.Raw) != 1 {
-			t.Fatalf("replaced anchor missing from tape: %#v, %v", old, err)
+		if len(ids) != 2 || ids[0] != seq(1) || ids[1] != seq(2) {
+			t.Fatalf("anchors = %v", ids)
 		}
 	}
 	check(store)
+	otherOwner := owner.WithOwnerId(context.Background(), "owner-b")
+	if err := store.Init(otherOwner); err != nil {
+		t.Fatal(err)
+	}
+	for anchor, err := range store.Anchors(otherOwner) {
+		t.Fatalf("other owner anchor = %v, %v", anchor, err)
+	}
 	reloaded, err := NewJSONLStorage("session-a", dir)
 	if err != nil {
 		t.Fatal(err)
@@ -181,6 +143,16 @@ func TestJSONLAnchorSnapshotRebuildsReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(reloaded)
+	otherSession, err := NewJSONLStorage("session-b", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := otherSession.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for anchor, err := range otherSession.Anchors(ctx) {
+		t.Fatalf("other session anchor = %v, %v", anchor, err)
+	}
 }
 
 func TestJSONLInitIsIdempotentForSameInstance(t *testing.T) {
@@ -221,7 +193,7 @@ func TestJSONLUsesEmbeddedAferoFS(t *testing.T) {
 	}
 
 	want := entry.Entry{}
-	if err := store.Store(ctx, want); err != nil {
+	if _, err := store.Store(ctx, want); err != nil {
 		t.Fatalf("Store: %v", err)
 	}
 
@@ -254,7 +226,7 @@ func TestJSONLRoundTripsCustomEntry(t *testing.T) {
 		Entry:      entry.NewEntry(entry.WithEntryContent("hello")),
 		Extensions: map[string]any{"event_id": "event-1"},
 	}
-	if err := store.Store(ctx, want); err != nil {
+	if _, err := store.Store(ctx, want); err != nil {
 		t.Fatal(err)
 	}
 	view, err := store.Range(ctx, view.EntryRange{SeqS: seq(1), SeqE: seq(2)})
@@ -290,10 +262,10 @@ func TestJSONLSeparatesOwnerState(t *testing.T) {
 		}
 	}
 
-	if err := store.Store(ctxA, entry.NewEntry(entry.WithEntryOwner("owner-a"))); err != nil {
+	if _, err := store.Store(ctxA, entry.NewEntry(entry.WithEntryOwner("owner-a"))); err != nil {
 		t.Fatalf("Store owner-a: %v", err)
 	}
-	if err := store.Store(ctxB, entry.NewEntry(entry.WithEntryOwner("owner-b"))); err != nil {
+	if _, err := store.Store(ctxB, entry.NewEntry(entry.WithEntryOwner("owner-b"))); err != nil {
 		t.Fatalf("Store owner-b: %v", err)
 	}
 
@@ -340,7 +312,7 @@ func TestJSONLGetReturnsLastEntryID(t *testing.T) {
 		t.Fatalf("Init: %v", err)
 	}
 	for _, id := range []entry.Seq{seq(7), seq(13)} {
-		if err := store.Store(ctx, entry.NewEntry(entry.WithEntryID(id))); err != nil {
+		if _, err := store.Store(ctx, entry.NewEntry(entry.WithEntryID(id))); err != nil {
 			t.Fatalf("Store entry %s: %v", id, err)
 		}
 	}
@@ -381,7 +353,7 @@ func TestJSONLGetReturnsLastEntryID(t *testing.T) {
 		t.Fatalf("reloaded scope end mismatch: want 13, got %s", got.Scope.SeqE)
 	}
 	lastTimestamp := mustOwnerState(t, reloaded, "owner-a").lastTimestamp
-	if err := reloaded.Store(ctx, entry.NewEntry(entry.WithEntryTimestamp(time.Unix(1, 0)))); err != nil {
+	if _, err := reloaded.Store(ctx, entry.NewEntry(entry.WithEntryTimestamp(time.Unix(1, 0)))); err != nil {
 		t.Fatalf("Store after reload: %v", err)
 	}
 	entries, err := reloaded.Range(ctx, view.EntryRange{SeqS: seq(14), SeqE: seq(15)})
@@ -414,10 +386,10 @@ func TestJSONLAssignsSequenceBeyondUint64(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := entry.MustParseSeq("18446744073709551616")
-	if err := store.Store(ctx, entry.NewEntry(entry.WithEntryID(start))); err != nil {
+	if _, err := store.Store(ctx, entry.NewEntry(entry.WithEntryID(start))); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Store(ctx, entry.NewEntry()); err != nil {
+	if _, err := store.Store(ctx, entry.NewEntry()); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.Range(ctx, view.EntryRange{SeqS: start, SeqE: start.Next().Next()})
@@ -461,7 +433,7 @@ func TestJSONLAssignsEntryIDsAtomically(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := store.Store(ctx, entry.Entry{}); err != nil {
+			if _, err := store.Store(ctx, entry.Entry{}); err != nil {
 				t.Errorf("Store: %v", err)
 			}
 		}()

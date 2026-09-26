@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"os"
 	"path/filepath"
 	"slices"
@@ -27,8 +28,6 @@ import (
 )
 
 var _ storage.TapeStorage = (*JSONL)(nil)
-var _ storage.StoreResultStorage = (*JSONL)(nil)
-var _ finder.AnchorSnapshotReader = (*JSONL)(nil)
 
 func NewJSONLStorage(sessionId string, lp string) (*JSONL, error) {
 	if lp == "" {
@@ -52,7 +51,7 @@ type JSONLIndex struct {
 	Entries uint64
 
 	lastTimestamp time.Time
-	anchors       []finder.AnchorMetadata
+	anchors       []entry.EntryLike
 }
 
 type ownerJSONL struct {
@@ -61,7 +60,6 @@ type ownerJSONL struct {
 	lastEntryId    entry.Seq
 	lastTimestamp  time.Time
 	indexes        []JSONLIndex
-	anchorSnapshot finder.AnchorSnapshot
 	semanticModel  llm.Model
 	semanticIndex  []finder.SemanticItem
 	semanticEnable bool
@@ -182,19 +180,6 @@ func (j *JSONL) Init(
 			indexes = append(indexes, index)
 		}
 		state.indexes = indexes
-		state.anchorSnapshot = finder.AnchorSnapshot{}
-		var anchors []finder.JevAnchorRecord
-		for _, index := range indexes {
-			for _, anchor := range index.anchors {
-				if anchor.Kind == entry.AnchorKindJev {
-					anchors = append(anchors, anchor.JevAnchorRecord)
-				}
-			}
-		}
-		slices.SortFunc(anchors, func(a, b finder.JevAnchorRecord) int { return a.Seq.Cmp(b.Seq) })
-		for _, anchor := range anchors {
-			state.anchorSnapshot.Apply(anchor)
-		}
 		state.semanticModel = nil
 		state.semanticIndex = nil
 		state.semanticEnable = false
@@ -238,17 +223,7 @@ func (j *JSONL) Get(
 	}, nil
 }
 
-// Store is retained for callers that only need an error.
-// Deprecated: use StoreWithResult.
-func (j *JSONL) Store(
-	ctx context.Context,
-	e entry.EntryLike,
-) error {
-	_, err := j.StoreWithResult(ctx, e)
-	return err
-}
-
-func (j *JSONL) StoreWithResult(ctx context.Context, e entry.EntryLike) (entry.EntryLike, error) {
+func (j *JSONL) Store(ctx context.Context, e entry.EntryLike) (entry.EntryLike, error) {
 	if e == nil {
 		return nil, errors.New("jsonl: nil entry")
 	}
@@ -291,11 +266,8 @@ func (j *JSONL) StoreWithResult(ctx context.Context, e entry.EntryLike) (entry.E
 	index.lastTimestamp = timestamp
 	state.lastEntryId = e.GetID()
 	state.lastTimestamp = timestamp
-	if anchor, ok := finder.AnchorFromEntry(e); ok {
-		index.anchors = append(index.anchors, anchor)
-		if anchor.Kind == entry.AnchorKindJev {
-			state.anchorSnapshot.Apply(anchor.JevAnchorRecord)
-		}
+	if e.GetKind().IsAnchor() {
+		index.anchors = append(index.anchors, e)
 	}
 	if state.semanticEnable {
 		item, ok := semanticItem(ctx, state.semanticModel, e)
@@ -330,8 +302,8 @@ func buildJSONLIndex(fs afero.Fs, path string) (JSONLIndex, error) {
 		if e.GetTimestamp().After(index.lastTimestamp) {
 			index.lastTimestamp = e.GetTimestamp()
 		}
-		if anchor, ok := finder.AnchorFromEntry(e); ok {
-			index.anchors = append(index.anchors, anchor)
+		if e.GetKind().IsAnchor() {
+			index.anchors = append(index.anchors, e)
 		}
 	}
 	return index, nil
@@ -435,10 +407,14 @@ func (j *JSONL) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.Entr
 		}
 		for i := len(index.anchors) - 1; i >= 0 && found < option.MaxAnchors; i-- {
 			anchor := index.anchors[i]
-			if anchor.Kind != entry.AnchorKindHandoff || !latest && anchor.Seq.Cmp(seq) > 0 {
+			if anchor.GetKind() != entry.EntryKind(entry.AnchorKindHandoff.String()) || !latest && anchor.GetID().Cmp(seq) > 0 {
 				continue
 			}
-			r := anchor.Scope
+			payload, ok := handoffFromEntry(anchor)
+			if !ok {
+				continue
+			}
+			r := view.EntryRange{SeqS: payload.SeqS, SeqE: payload.SeqE}
 			if found == 0 {
 				result = r
 			} else {
@@ -535,14 +511,30 @@ func (j *JSONL) SemanticIndex(ctx context.Context) (finder.SemanticIndex, error)
 	return finder.SemanticIndex{Model: model, Items: items}, nil
 }
 
-func (j *JSONL) AnchorSnapshot(ctx context.Context) (finder.AnchorSnapshot, error) {
-	_, state, err := j.ownerState(ctx, false)
-	if err != nil {
-		return finder.AnchorSnapshot{}, fmt.Errorf("jsonl: %w", err)
+func (j *JSONL) Anchors(ctx context.Context) iter.Seq2[entry.EntryLike, error] {
+	return func(yield func(entry.EntryLike, error) bool) {
+		_, state, err := j.ownerState(ctx, false)
+		if err != nil {
+			yield(nil, fmt.Errorf("jsonl: %w", err))
+			return
+		}
+		state.RLock()
+		var anchors []entry.EntryLike
+		for _, index := range state.indexes {
+			anchors = append(anchors, index.anchors...)
+		}
+		state.RUnlock()
+		slices.SortFunc(anchors, func(a, b entry.EntryLike) int { return a.GetID().Cmp(b.GetID()) })
+		for _, anchor := range anchors {
+			if err := ctx.Err(); err != nil {
+				yield(nil, err)
+				return
+			}
+			if !yield(anchor, nil) {
+				return
+			}
+		}
 	}
-	state.RLock()
-	defer state.RUnlock()
-	return state.anchorSnapshot.Clone(), nil
 }
 
 func (j *JSONL) semanticIndexForPath(ctx context.Context, model llm.Model, path string) ([]finder.SemanticItem, error) {
@@ -576,18 +568,15 @@ func semanticItem(ctx context.Context, model llm.Model, e entry.EntryLike) (find
 	if model == nil {
 		return finder.SemanticItem{}, false
 	}
-	if e.GetKind() == entry.EntryKind(entry.AnchorKindJev.String()) {
+	if e.GetKind().IsAnchor() && e.GetKind() != entry.EntryKind(entry.AnchorKindHandoff.String()) {
 		return finder.SemanticItem{}, false
 	}
 	summary := e.GetSummary()
 	scope := view.EntryRange{SeqS: e.GetID(), SeqE: e.GetID().Next()}
-	if anchor, ok := finder.AnchorFromEntry(e); ok {
-		if anchor.Kind == entry.AnchorKindJev {
-			return finder.SemanticItem{}, false
-		}
+	if anchor, ok := handoffFromEntry(e); ok {
 		if anchor.Summary != "" {
 			summary = anchor.Summary
-			scope = anchor.Scope
+			scope = view.EntryRange{SeqS: anchor.SeqS, SeqE: anchor.SeqE}
 		}
 	}
 	if summary == "" {
@@ -598,6 +587,17 @@ func semanticItem(ctx context.Context, model llm.Model, e entry.EntryLike) (find
 		return finder.SemanticItem{}, false
 	}
 	return finder.SemanticItem{Summary: summary, Embedding: embedding, Scope: scope}, true
+}
+
+func handoffFromEntry(e entry.EntryLike) (entry.HandoffAnchor, bool) {
+	if e == nil || e.GetKind() != entry.EntryKind(entry.AnchorKindHandoff.String()) {
+		return entry.HandoffAnchor{}, false
+	}
+	var anchor entry.HandoffAnchor
+	if err := json.Unmarshal([]byte(e.GetSummary()), &anchor); err != nil || anchor.SeqS.Cmp(anchor.SeqE) > 0 {
+		return entry.HandoffAnchor{}, false
+	}
+	return anchor, true
 }
 
 func seqMin(a, b entry.Seq) entry.Seq {

@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"iter"
 	"testing"
 	"time"
 
 	"google.golang.org/genai"
 
+	"google.golang.org/adk/memory"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
 
+	jevext "github.com/scbizu/tape-go/pkg/ext/jev"
 	"github.com/scbizu/tape-go/pkg/tape"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
@@ -19,6 +22,74 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/view"
 	"github.com/spf13/afero"
 )
+
+type searchDecider struct{}
+
+func (searchDecider) ShouldAnchor(context.Context, view.Projection) (float64, error) {
+	return 0, nil
+}
+func (searchDecider) ValidateSummary(context.Context, view.Projection, jevext.MemoryState) (float64, error) {
+	return 1, nil
+}
+
+type searchSummarizer struct{}
+
+func (searchSummarizer) Summarize(context.Context, view.Projection) (jevext.MemoryState, error) {
+	return jevext.MemoryState{Decisions: []string{"saved"}}, nil
+}
+
+type searchClassifier struct{}
+
+func (searchClassifier) Classify(context.Context, string, []jevext.MemoryState) iter.Seq2[jevext.Classification, error] {
+	return func(yield func(jevext.Classification, error) bool) {
+		yield(jevext.Classification{Index: 0, Score: 1}, nil)
+	}
+}
+
+func TestSearchMemoryUsesConfiguredTapeExtension(t *testing.T) {
+	ownerID := owner.UserID("owner-a")
+	ctx := owner.WithOwnerId(context.Background(), ownerID)
+	base, err := jsonl.NewJSONLStorage("session-a", "/tapes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Fs = afero.NewMemMapFs()
+	tape := &tape.Tape{OwnerID: ownerID}
+	decorated, err := jevext.NewStorage(base, &tape.View, jevext.Config{
+		Decider: searchDecider{}, Summarizer: searchSummarizer{}, Classifier: searchClassifier{}, Threshold: .7,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tape.TapeStorage = decorated
+	if err := tape.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tape.Store(ctx, entry.NewEntry(entry.WithEntryKind(entry.EntryUser), entry.WithEntryContent("remember me"))); err != nil {
+		t.Fatal(err)
+	}
+	anchor, err := jevext.NewAnchor(entry.Seq{}, ownerID, jevext.Anchor{
+		State: jevext.MemoryState{Decisions: []string{"remember me"}},
+		SeqS:  entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tape.Store(ctx, anchor); err != nil {
+		t.Fatal(err)
+	}
+	adapter, err := NewTapeAdapter(tape, "app-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.SearchMemory(ctx, &memory.SearchRequest{AppName: "app-a", UserID: ownerID, Query: "remember"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Memories) != 1 || result.Memories[0].Content.Parts[0].Text != "remember me" {
+		t.Fatalf("search memories = %#v", result.Memories)
+	}
+}
 
 type bufferIO struct {
 	bytes.Buffer
@@ -77,7 +148,7 @@ func TestTapeAdapterSessionAndContextWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := adapter.Tape.Store(ctx, entry.NewAnchor(entry.SeqFromUint64(2), ownerID, entry.AnchorKindHandoff, payload)); err != nil {
+	if _, err := adapter.Tape.Store(ctx, entry.NewAnchor(entry.SeqFromUint64(2), ownerID, entry.AnchorKindHandoff, payload)); err != nil {
 		t.Fatal(err)
 	}
 	adapter.Tape.SetView(view.EntryRange{SeqS: entry.SeqFromUint64(3)})

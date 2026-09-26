@@ -229,7 +229,7 @@ func TestStoreTaskVersionIsIndependentFromTapeSequence(t *testing.T) {
 			if err := backend.Init(ownerCtx); err != nil {
 				t.Fatal(err)
 			}
-			if err := backend.Store(ownerCtx, entry.NewEntry(entry.WithEntryOwner("owner-a"))); err != nil {
+			if _, err := backend.Store(ownerCtx, entry.NewEntry(entry.WithEntryOwner("owner-a"))); err != nil {
 				t.Fatal(err)
 			}
 
@@ -440,7 +440,7 @@ func TestStoreReplayFailsClosedOnCorruptRecord(t *testing.T) {
 					recordExtension: `{"profileVersion":99,"recordId":"corrupt-1","owner":"owner-a","kind":"a2a:task"}`,
 				},
 			}
-			if err := backend.Store(ownerCtx, corrupt); err != nil {
+			if _, err := backend.Store(ownerCtx, corrupt); err != nil {
 				t.Fatal(err)
 			}
 

@@ -1,4 +1,4 @@
-// Package jev adapts TypeSafe AI's Jev API to finder.JevClassifier.
+// Package jev adapts TypeSafe AI's Jev API to jevext.Classifier.
 package jev
 
 import (
@@ -14,8 +14,8 @@ import (
 	"uuid"
 
 	"github.com/hashicorp/go-retryablehttp"
-	"github.com/scbizu/tape-go/pkg/tape/entry"
-	"github.com/scbizu/tape-go/pkg/tape/finder"
+	jevext "github.com/scbizu/tape-go/pkg/ext/jev"
+	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
 const (
@@ -23,8 +23,8 @@ const (
 	DefaultModel    = "jev-latest"
 )
 
-var _ finder.JevClassifier = (*Client)(nil)
-var _ finder.JevAnchorDecider = (*Client)(nil)
+var _ jevext.Classifier = (*Client)(nil)
+var _ jevext.AnchorDecider = (*Client)(nil)
 
 type HTTPClient interface {
 	Do(*http.Request) (*http.Response, error)
@@ -113,8 +113,8 @@ func NewClient(apiKey string, opts ...Option) (*Client, error) {
 }
 
 type candidateState struct {
-	ID    string               `json:"id"`
-	State entry.JevMemoryState `json:"state"`
+	ID    string             `json:"id"`
+	State jevext.MemoryState `json:"state"`
 }
 
 type question struct {
@@ -156,7 +156,7 @@ type anchorResponse struct {
 
 // ShouldAnchor asks Jev whether one entry contains durable information worth
 // exposing as a future memory-search candidate.
-func (c *Client) ShouldAnchor(ctx context.Context, projection finder.JevViewProjection) (float64, error) {
+func (c *Client) ShouldAnchor(ctx context.Context, projection view.Projection) (float64, error) {
 	if c == nil || c.httpClient == nil {
 		return 0, errors.New("jev: client is not enabled")
 	}
@@ -164,9 +164,9 @@ func (c *Client) ShouldAnchor(ctx context.Context, projection finder.JevViewProj
 		return 0, errors.New("jev: empty anchor view projection")
 	}
 	payload := struct {
-		State     finder.JevViewProjection `json:"state"`
-		Model     string                   `json:"model"`
-		Questions map[string]noulQuestion  `json:"questions"`
+		State     view.Projection         `json:"state"`
+		Model     string                  `json:"model"`
+		Questions map[string]noulQuestion `json:"questions"`
 	}{
 		State: projection,
 		Model: c.model,
@@ -198,7 +198,7 @@ func (c *Client) ShouldAnchor(ctx context.Context, projection finder.JevViewProj
 
 // ValidateSummary asks Jev whether a generated summary is fully supported by
 // its source view and preserves the durable information needed for retrieval.
-func (c *Client) ValidateSummary(ctx context.Context, projection finder.JevViewProjection, summary entry.JevMemoryState) (float64, error) {
+func (c *Client) ValidateSummary(ctx context.Context, projection view.Projection, summary jevext.MemoryState) (float64, error) {
 	if c == nil || c.httpClient == nil {
 		return 0, errors.New("jev: client is not enabled")
 	}
@@ -207,8 +207,8 @@ func (c *Client) ValidateSummary(ctx context.Context, projection finder.JevViewP
 	}
 	payload := struct {
 		State struct {
-			SourceView      finder.JevViewProjection `json:"source_view"`
-			ProposedSummary entry.JevMemoryState     `json:"proposed_summary"`
+			SourceView      view.Projection    `json:"source_view"`
+			ProposedSummary jevext.MemoryState `json:"proposed_summary"`
 		} `json:"state"`
 		Model     string                  `json:"model"`
 		Questions map[string]noulQuestion `json:"questions"`
@@ -244,14 +244,14 @@ func (c *Client) ValidateSummary(ctx context.Context, projection finder.JevViewP
 
 // Classify asks Jev to independently score every candidate against the query
 // in one request. Best-result selection belongs to the finder engine.
-func (c *Client) Classify(ctx context.Context, query string, candidates []entry.JevMemoryState) iter.Seq2[finder.Classification, error] {
-	return func(yield func(finder.Classification, error) bool) {
+func (c *Client) Classify(ctx context.Context, query string, candidates []jevext.MemoryState) iter.Seq2[jevext.Classification, error] {
+	return func(yield func(jevext.Classification, error) bool) {
 		if c == nil || c.httpClient == nil {
-			yield(finder.Classification{}, errors.New("jev: client is not enabled"))
+			yield(jevext.Classification{}, errors.New("jev: client is not enabled"))
 			return
 		}
 		if strings.TrimSpace(query) == "" {
-			yield(finder.Classification{}, errors.New("jev: empty classification query"))
+			yield(jevext.Classification{}, errors.New("jev: empty classification query"))
 			return
 		}
 		if len(candidates) == 0 {
@@ -263,7 +263,7 @@ func (c *Client) Classify(ctx context.Context, query string, candidates []entry.
 		ids := make([]string, len(candidates))
 		for i, candidate := range candidates {
 			if candidate.IsZero() {
-				yield(finder.Classification{}, fmt.Errorf("jev: candidate %d has empty state", i))
+				yield(jevext.Classification{}, fmt.Errorf("jev: candidate %d has empty state", i))
 				return
 			}
 			id := uuid.New().String()
@@ -282,22 +282,22 @@ func (c *Client) Classify(ctx context.Context, query string, candidates []entry.
 		}
 		body, err := json.Marshal(payload)
 		if err != nil {
-			yield(finder.Classification{}, fmt.Errorf("jev: encode classification request: %w", err))
+			yield(jevext.Classification{}, fmt.Errorf("jev: encode classification request: %w", err))
 			return
 		}
 
 		var response classifyResponse
 		if err := c.post(ctx, body, &response); err != nil {
-			yield(finder.Classification{}, err)
+			yield(jevext.Classification{}, err)
 			return
 		}
 		for i, id := range ids {
 			answer, ok := response.Answers[id]
 			if !ok {
-				yield(finder.Classification{}, fmt.Errorf("jev: response missing answer %q", id))
+				yield(jevext.Classification{}, fmt.Errorf("jev: response missing answer %q", id))
 				return
 			}
-			if !yield(finder.Classification{Index: i, Score: answer.Score, Confidence: answer.Confidence}, nil) {
+			if !yield(jevext.Classification{Index: i, Score: answer.Score, Confidence: answer.Confidence}, nil) {
 				return
 			}
 		}
