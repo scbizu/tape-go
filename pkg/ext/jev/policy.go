@@ -1,4 +1,4 @@
-package finder
+package jev
 
 import (
 	"context"
@@ -8,47 +8,47 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
-// JevViewEntry is the non-derived entry representation exposed to Jev.
-type JevViewEntry struct {
+// ViewEntry is the non-derived entry representation exposed to Jev.
+type ViewEntry struct {
 	Seq     entry.Seq       `json:"seq"`
 	Kind    entry.EntryKind `json:"kind"`
 	Summary string          `json:"summary"`
 }
 
-// JevViewProjection is the stable projection shared by anchor decision,
+// ViewProjection is the stable projection shared by anchor decision,
 // summarization, and faithfulness validation.
-type JevViewProjection struct {
+type ViewProjection struct {
 	Scope   view.EntryRange `json:"scope"`
-	Entries []JevViewEntry  `json:"entries"`
+	Entries []ViewEntry     `json:"entries"`
 }
 
-// JevAnchorDecider returns the probability that a complete view projection
+// AnchorDecider returns the probability that a complete view projection
 // should trigger a durable Jev memory checkpoint.
-type JevAnchorDecider interface {
-	ShouldAnchor(context.Context, JevViewProjection) (float64, error)
-	ValidateSummary(context.Context, JevViewProjection, entry.JevMemoryState) (float64, error)
+type AnchorDecider interface {
+	ShouldAnchor(context.Context, ViewProjection) (float64, error)
+	ValidateSummary(context.Context, ViewProjection, MemoryState) (float64, error)
 }
 
-// JevSummarizer summarizes one assembled tape view into Jev's structured
+// Summarizer summarizes one assembled tape view into Jev's structured
 // memory state. The view retains its range and entries until the provider
 // boundary instead of being flattened into an untyped string.
-type JevSummarizer interface {
-	Summarize(context.Context, JevViewProjection) (entry.JevMemoryState, error)
+type Summarizer interface {
+	Summarize(context.Context, ViewProjection) (MemoryState, error)
 }
 
-// JevAnchorPolicy lets Jev decide when to checkpoint, then delegates the
+// AnchorPolicy lets Jev decide when to checkpoint, then delegates the
 // bounded active-view summary to an LLM provider.
-type JevAnchorPolicy struct {
-	Decider    JevAnchorDecider `validate:"required"`
-	Summarizer JevSummarizer    `validate:"required"`
-	Threshold  float64          `validate:"gte=0,lte=1"`
+type AnchorPolicy struct {
+	Decider    AnchorDecider `validate:"required"`
+	Summarizer Summarizer    `validate:"required"`
+	Threshold  float64       `validate:"gte=0,lte=1"`
 }
 
-func NewJevAnchorPolicy(decider JevAnchorDecider, summarizer JevSummarizer, threshold float64) JevAnchorPolicy {
-	return JevAnchorPolicy{Decider: decider, Summarizer: summarizer, Threshold: threshold}
+func NewAnchorPolicy(decider AnchorDecider, summarizer Summarizer, threshold float64) AnchorPolicy {
+	return AnchorPolicy{Decider: decider, Summarizer: summarizer, Threshold: threshold}
 }
 
-func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike, memory view.EntryView) (entry.EntryLike, bool, error) {
+func (p AnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike, memory view.EntryView) (entry.EntryLike, bool, error) {
 	if err := validateStructure("Jev anchor policy", p); err != nil {
 		return nil, false, err
 	}
@@ -72,7 +72,7 @@ func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike,
 		return nil, false, err
 	}
 	if summary.IsZero() {
-		return nil, false, errors.New("finder: Jev anchor summarizer returned empty memory state")
+		return nil, false, errors.New("jev: anchor summarizer returned empty memory state")
 	}
 	faithfulness, err := p.Decider.ValidateSummary(ctx, projection, summary)
 	if err != nil {
@@ -85,7 +85,7 @@ func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike,
 	if ownerID == "" {
 		ownerID = memory.Owner
 	}
-	anchor, err := entry.NewJevAnchor(entry.Seq{}, ownerID, entry.JevAnchor{
+	anchor, err := NewAnchor(entry.Seq{}, ownerID, Anchor{
 		State: summary,
 		SeqS:  memory.Scope.SeqS,
 		SeqE:  memory.Scope.SeqE,
@@ -99,21 +99,21 @@ func (p JevAnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike,
 // ProjectJevView builds the source state seen by both the summarizer and Jev's
 // faithfulness check. Anchors are excluded to avoid recursively summarizing
 // derived memories.
-func ProjectJevView(memory view.EntryView) (JevViewProjection, error) {
-	projection := JevViewProjection{
+func ProjectJevView(memory view.EntryView) (ViewProjection, error) {
+	projection := ViewProjection{
 		Scope:   memory.Scope,
-		Entries: make([]JevViewEntry, 0, len(memory.Raw)),
+		Entries: make([]ViewEntry, 0, len(memory.Raw)),
 	}
 	for _, e := range memory.Raw {
 		if e == nil || e.GetKind().IsAnchor() {
 			continue
 		}
-		projection.Entries = append(projection.Entries, JevViewEntry{
+		projection.Entries = append(projection.Entries, ViewEntry{
 			Seq: e.GetID(), Kind: e.GetKind(), Summary: e.GetSummary(),
 		})
 	}
 	if len(projection.Entries) == 0 {
-		return JevViewProjection{}, errors.New("finder: empty Jev view projection")
+		return ViewProjection{}, errors.New("jev: empty view projection")
 	}
 	return projection, nil
 }

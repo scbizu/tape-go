@@ -14,9 +14,8 @@ import (
 	deepseek "github.com/cohesion-org/deepseek-go"
 	"google.golang.org/genai"
 
+	jevext "github.com/scbizu/tape-go/pkg/ext/jev"
 	"github.com/scbizu/tape-go/pkg/llm"
-	"github.com/scbizu/tape-go/pkg/tape/entry"
-	"github.com/scbizu/tape-go/pkg/tape/finder"
 
 	"google.golang.org/adk/model"
 )
@@ -33,7 +32,7 @@ type Model struct {
 
 var _ model.LLM = (*Model)(nil)
 var _ llm.Model = (*Model)(nil)
-var _ finder.JevSummarizer = (*Model)(nil)
+var _ jevext.Summarizer = (*Model)(nil)
 
 var ErrEmbeddingUnsupported = errors.New("ds: embedding is not supported")
 
@@ -99,13 +98,13 @@ func (m *Model) ReRank(ctx context.Context, query string, candidates []string) (
 	return rerankByOrder(candidates, resp.Choices[0].Message.Content)
 }
 
-func (m *Model) Summarize(ctx context.Context, projection finder.JevViewProjection) (entry.JevMemoryState, error) {
+func (m *Model) Summarize(ctx context.Context, projection jevext.ViewProjection) (jevext.MemoryState, error) {
 	if !m.IsEnable() {
-		return entry.JevMemoryState{}, errors.New("ds: model is not enabled")
+		return jevext.MemoryState{}, errors.New("ds: model is not enabled")
 	}
 	state, err := json.Marshal(projection)
 	if err != nil {
-		return entry.JevMemoryState{}, fmt.Errorf("ds: encode view projection: %w", err)
+		return jevext.MemoryState{}, fmt.Errorf("ds: encode view projection: %w", err)
 	}
 	resp, err := m.client.CreateChatCompletion(ctx, &deepseek.ChatCompletionRequest{
 		Model: m.name,
@@ -124,21 +123,21 @@ func (m *Model) Summarize(ctx context.Context, projection finder.JevViewProjecti
 		MaxTokens:      1024,
 	})
 	if err != nil {
-		return entry.JevMemoryState{}, fmt.Errorf("ds: summarize: %w", err)
+		return jevext.MemoryState{}, fmt.Errorf("ds: summarize: %w", err)
 	}
 	if len(resp.Choices) == 0 {
-		return entry.JevMemoryState{}, errors.New("ds: summarize empty response")
+		return jevext.MemoryState{}, errors.New("ds: summarize empty response")
 	}
 	summary := strings.TrimSpace(resp.Choices[0].Message.Content)
 	if summary == "" {
-		return entry.JevMemoryState{}, errors.New("ds: summarize empty content")
+		return jevext.MemoryState{}, errors.New("ds: summarize empty content")
 	}
-	var memory entry.JevMemoryState
+	var memory jevext.MemoryState
 	if err := json.Unmarshal([]byte(summary), &memory); err != nil {
-		return entry.JevMemoryState{}, fmt.Errorf("ds: summarize invalid memory state: %w", err)
+		return jevext.MemoryState{}, fmt.Errorf("ds: summarize invalid memory state: %w", err)
 	}
 	if memory.IsZero() {
-		return entry.JevMemoryState{}, errors.New("ds: summarize returned memory state without a decision")
+		return jevext.MemoryState{}, errors.New("ds: summarize returned memory state without a decision")
 	}
 	return memory, nil
 }

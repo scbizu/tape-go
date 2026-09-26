@@ -1,4 +1,4 @@
-package finder
+package jev
 
 import (
 	"testing"
@@ -6,10 +6,10 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 )
 
-func TestAnchorSnapshotCloneIsIndependent(t *testing.T) {
-	original := AnchorSnapshot{Anchors: []JevAnchorRecord{{
+func TestSnapshotCloneIsIndependent(t *testing.T) {
+	original := Snapshot{Anchors: []AnchorRecord{{
 		Seq:      entry.SeqFromUint64(3),
-		State:    entry.JevMemoryState{Decisions: []string{"original"}},
+		State:    MemoryState{Decisions: []string{"original"}},
 		Replaces: []entry.Seq{entry.SeqFromUint64(1)},
 	}}}
 

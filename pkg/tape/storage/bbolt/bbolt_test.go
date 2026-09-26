@@ -14,7 +14,6 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
-	bolt "go.etcd.io/bbolt"
 )
 
 func TestBboltStoreGetRange(t *testing.T) {
@@ -23,7 +22,7 @@ func TestBboltStoreGetRange(t *testing.T) {
 	store, ctx := newStore(t, "owner-a", "session-a")
 	defer store.Close()
 
-	stored, err := store.StoreWithResult(ctx, entry.NewEntry(entry.WithEntryContent("hello")))
+	stored, err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent("hello")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,33 +46,7 @@ func TestBboltStoreGetRange(t *testing.T) {
 	}
 }
 
-func TestBboltAnchorSnapshot(t *testing.T) {
-	t.Parallel()
-
-	store, ctx := newStore(t, "owner-a", "session-a")
-	defer store.Close()
-	if err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent("ordinary"))); err != nil {
-		t.Fatal(err)
-	}
-	payload, err := json.Marshal(entry.JevAnchor{State: entry.JevMemoryState{Decisions: []string{"searchable"}}, SeqS: seq(1), SeqE: seq(2)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Store(ctx, entry.NewAnchor(entry.Seq{}, "owner-a", entry.AnchorKindJev, payload)); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := store.AnchorSnapshot(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	items := snapshot.Anchors
-	if len(items) != 1 || items[0].Seq != seq(2) || len(items[0].State.Decisions) != 1 || items[0].State.Decisions[0] != "searchable" ||
-		items[0].Scope != (view.EntryRange{SeqS: seq(1), SeqE: seq(2)}) {
-		t.Fatalf("AnchorSnapshot = %#v", items)
-	}
-}
-
-func TestBboltAnchorSnapshotPersistsReplacement(t *testing.T) {
+func TestBboltEnumeratesPersistedAnchors(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "tape.db")
 	ctx := owner.WithOwnerId(context.Background(), "owner-a")
@@ -84,34 +57,32 @@ func TestBboltAnchorSnapshotPersistsReplacement(t *testing.T) {
 	if err := store.Init(ctx); err != nil {
 		t.Fatal(err)
 	}
-	for _, anchor := range []entry.JevAnchor{
-		{State: entry.JevMemoryState{Decisions: []string{"old"}}, SeqS: seq(1), SeqE: seq(2)},
-		{State: entry.JevMemoryState{Decisions: []string{"unrelated"}}, SeqS: seq(2), SeqE: seq(3)},
-		{State: entry.JevMemoryState{Decisions: []string{"replacement"}}, SeqS: seq(3), SeqE: seq(4), Replaces: []entry.Seq{seq(1)}},
-	} {
-		e, err := entry.NewJevAnchor(entry.Seq{}, "owner-a", anchor)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := store.Store(ctx, e); err != nil {
+	for _, kind := range []entry.AnchorKind{entry.AnchorKindHandoff, entry.AnchorKindCustom} {
+		if _, err := store.Store(ctx, entry.NewAnchor(entry.Seq{}, "owner-a", kind, json.RawMessage(`{}`))); err != nil {
 			t.Fatal(err)
 		}
 	}
 	check := func(s *Bbolt) {
 		t.Helper()
-		snapshot, err := s.AnchorSnapshot(ctx)
-		if err != nil {
-			t.Fatal(err)
+		var ids []entry.Seq
+		for anchor, err := range s.Anchors(ctx) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids = append(ids, anchor.GetID())
 		}
-		if len(snapshot.Anchors) != 2 || snapshot.Anchors[0].Seq != seq(2) || snapshot.Anchors[1].Seq != seq(3) {
-			t.Fatalf("active anchors = %#v", snapshot.Anchors)
-		}
-		old, err := s.Range(ctx, view.EntryRange{SeqS: seq(1), SeqE: seq(2)})
-		if err != nil || len(old.Raw) != 1 {
-			t.Fatalf("replaced anchor missing from tape: %#v, %v", old, err)
+		if len(ids) != 2 || ids[0] != seq(1) || ids[1] != seq(2) {
+			t.Fatalf("anchors = %v", ids)
 		}
 	}
 	check(store)
+	otherOwner := owner.WithOwnerId(context.Background(), "owner-b")
+	if err := store.Init(otherOwner); err != nil {
+		t.Fatal(err)
+	}
+	for anchor, err := range store.Anchors(otherOwner) {
+		t.Fatalf("other owner anchor = %v, %v", anchor, err)
+	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -124,22 +95,20 @@ func TestBboltAnchorSnapshotPersistsReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(reloaded)
-	if err := reloaded.db.Update(func(tx *bolt.Tx) error {
-		meta, err := sessionBucket(tx, metaBucket, "owner-a", "session-a", false)
-		if err != nil {
-			return err
-		}
-		if err := meta.Delete(snapshotVersionKey); err != nil {
-			return err
-		}
-		return tx.DeleteBucket(jevSnapshotBucket)
-	}); err != nil {
+	if err := reloaded.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := reloaded.Init(ctx); err != nil {
+	otherSession, err := NewBboltStorage("session-b", path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	check(reloaded)
+	defer otherSession.Close()
+	if err := otherSession.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for anchor, err := range otherSession.Anchors(ctx) {
+		t.Fatalf("other session anchor = %v, %v", anchor, err)
+	}
 }
 
 func TestBboltSeparatesOwnerState(t *testing.T) {
@@ -158,10 +127,10 @@ func TestBboltSeparatesOwnerState(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := store.Store(ctxA, entry.NewEntry(entry.WithEntryOwner("owner-a"))); err != nil {
+	if _, err := store.Store(ctxA, entry.NewEntry(entry.WithEntryOwner("owner-a"))); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Store(ctxB, entry.NewEntry(entry.WithEntryOwner("owner-b"))); err != nil {
+	if _, err := store.Store(ctxB, entry.NewEntry(entry.WithEntryOwner("owner-b"))); err != nil {
 		t.Fatal(err)
 	}
 
@@ -194,7 +163,7 @@ func TestBboltReloadRestoresMeta(t *testing.T) {
 	if err := store.Init(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Store(ctx, entry.NewEntry(entry.WithEntryID(seq(7)), entry.WithEntryTimestamp(time.Unix(10, 0)))); err != nil {
+	if _, err := store.Store(ctx, entry.NewEntry(entry.WithEntryID(seq(7)), entry.WithEntryTimestamp(time.Unix(10, 0)))); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -216,7 +185,7 @@ func TestBboltReloadRestoresMeta(t *testing.T) {
 	if tv.Scope.SeqE != seq(7) {
 		t.Fatalf("reload seq mismatch: want 7, got %s", tv.Scope.SeqE)
 	}
-	if err := reloaded.Store(ctx, entry.NewEntry(entry.WithEntryTimestamp(time.Unix(1, 0)))); err != nil {
+	if _, err := reloaded.Store(ctx, entry.NewEntry(entry.WithEntryTimestamp(time.Unix(1, 0)))); err != nil {
 		t.Fatal(err)
 	}
 	got, err := reloaded.Range(ctx, view.EntryRange{SeqS: seq(8), SeqE: seq(9)}, storage.WithRangeAfter(time.Unix(10, 0)))
@@ -240,7 +209,7 @@ func TestBboltAssignsEntryIDsAtomically(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := store.Store(ctx, entry.Entry{}); err != nil {
+			if _, err := store.Store(ctx, entry.Entry{}); err != nil {
 				t.Errorf("Store: %v", err)
 			}
 		}()
@@ -268,7 +237,7 @@ func TestBboltRewind(t *testing.T) {
 	defer store.Close()
 
 	for _, text := range []string{"one", "two"} {
-		if err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent(text))); err != nil {
+		if _, err := store.Store(ctx, entry.NewEntry(entry.WithEntryContent(text))); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -276,7 +245,7 @@ func TestBboltRewind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Store(ctx, entry.NewAnchor(entry.Seq{}, "owner-a", entry.AnchorKindHandoff, payload)); err != nil {
+	if _, err := store.Store(ctx, entry.NewAnchor(entry.Seq{}, "owner-a", entry.AnchorKindHandoff, payload)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -300,11 +269,11 @@ func TestBboltOrdersSequencesBeyondUint64(t *testing.T) {
 	first := entry.MustParseSeq("18446744073709551616")
 	second := entry.MustParseSeq("18446744073709551617")
 	for _, id := range []entry.Seq{second, first} {
-		if err := store.Store(ctx, entry.NewEntry(entry.WithEntryID(id))); err != nil {
+		if _, err := store.Store(ctx, entry.NewEntry(entry.WithEntryID(id))); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := store.Store(ctx, entry.NewEntry()); err != nil {
+	if _, err := store.Store(ctx, entry.NewEntry()); err != nil {
 		t.Fatal(err)
 	}
 	third := second.Next()

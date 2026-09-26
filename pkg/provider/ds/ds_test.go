@@ -9,8 +9,8 @@ import (
 	deepseek "github.com/cohesion-org/deepseek-go"
 	"google.golang.org/genai"
 
+	jevext "github.com/scbizu/tape-go/pkg/ext/jev"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
-	"github.com/scbizu/tape-go/pkg/tape/finder"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 
 	"google.golang.org/adk/model"
@@ -161,7 +161,7 @@ func TestModelSummarize(t *testing.T) {
 		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
 		Raw:   []entry.EntryLike{entry.NewEntry(entry.WithEntryContent("fact"))},
 	}
-	projection, err := finder.ProjectJevView(memory)
+	projection, err := jevext.ProjectJevView(memory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestModelSummarizeRejectsStateWithoutDecision(t *testing.T) {
 	}}
 	llm := &Model{client: client, name: "deepseek-test"}
 	memory := view.EntryView{Raw: []entry.EntryLike{entry.NewEntry(entry.WithEntryContent("fact"))}}
-	projection, err := finder.ProjectJevView(memory)
+	projection, err := jevext.ProjectJevView(memory)
 	if err != nil {
 		t.Fatal(err)
 	}

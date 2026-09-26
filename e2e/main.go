@@ -93,7 +93,7 @@ func runRewindDemoWithBackend(ctx context.Context, apiKey string, backend storag
 	}
 	defer t.Close()
 
-	if err := t.Store(ctx, entry.NewEntry(
+	if _, err := t.Store(ctx, entry.NewEntry(
 		entry.WithEntryKind(entry.EntryUser),
 		entry.WithEntryContent("The archived reference is entry one."),
 	)); err != nil {

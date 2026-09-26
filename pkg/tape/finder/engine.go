@@ -19,6 +19,11 @@ type Engine interface {
 	Find(ctx context.Context, tape storage.EntryStorage) (view.EntryView, error)
 }
 
+// Provider lets a storage decorator select a finder for a query.
+type Provider interface {
+	Finder(query string) Engine
+}
+
 type ByEntryID entry.Seq
 
 // NewByEntryID returns an exact-entry finder for id.

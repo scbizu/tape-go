@@ -71,8 +71,19 @@ func (s Semantic) FindAll(ctx context.Context, tape storage.EntryStorage) ([]vie
 	if s.TopK <= 0 {
 		return nil, errors.New("finder: invalid topK")
 	}
-	indexer, ok := tape.(SemanticIndexer)
-	if !ok {
+	var indexer SemanticIndexer
+	for current := tape; current != nil; {
+		if candidate, ok := current.(SemanticIndexer); ok {
+			indexer = candidate
+			break
+		}
+		unwrapper, ok := current.(storage.Unwrapper)
+		if !ok {
+			break
+		}
+		current = unwrapper.Unwrap()
+	}
+	if indexer == nil {
 		return nil, errors.New("finder: semantic index is not supported")
 	}
 	index, err := indexer.SemanticIndex(ctx)
