@@ -11,30 +11,30 @@ import (
 
 type fixedAnchorDecider float64
 
-func (d fixedAnchorDecider) ShouldAnchor(context.Context, ViewProjection) (float64, error) {
+func (d fixedAnchorDecider) ShouldAnchor(context.Context, view.Projection) (float64, error) {
 	return float64(d), nil
 }
 
-func (d fixedAnchorDecider) ValidateSummary(context.Context, ViewProjection, MemoryState) (float64, error) {
+func (d fixedAnchorDecider) ValidateSummary(context.Context, view.Projection, MemoryState) (float64, error) {
 	return float64(d), nil
 }
 
 type fixedSummarizer MemoryState
 
-func (s fixedSummarizer) Summarize(context.Context, ViewProjection) (MemoryState, error) {
+func (s fixedSummarizer) Summarize(context.Context, view.Projection) (MemoryState, error) {
 	return MemoryState(s), nil
 }
 
 type recordingAnchorDecider struct {
-	projection ViewProjection
+	projection view.Projection
 }
 
-func (d *recordingAnchorDecider) ShouldAnchor(_ context.Context, projection ViewProjection) (float64, error) {
+func (d *recordingAnchorDecider) ShouldAnchor(_ context.Context, projection view.Projection) (float64, error) {
 	d.projection = projection
 	return .9, nil
 }
 
-func (*recordingAnchorDecider) ValidateSummary(context.Context, ViewProjection, MemoryState) (float64, error) {
+func (*recordingAnchorDecider) ValidateSummary(context.Context, view.Projection, MemoryState) (float64, error) {
 	return .9, nil
 }
 
@@ -129,11 +129,11 @@ type splitAnchorDecider struct {
 	should, faithful float64
 }
 
-func (d splitAnchorDecider) ShouldAnchor(context.Context, ViewProjection) (float64, error) {
+func (d splitAnchorDecider) ShouldAnchor(context.Context, view.Projection) (float64, error) {
 	return d.should, nil
 }
 
-func (d splitAnchorDecider) ValidateSummary(context.Context, ViewProjection, MemoryState) (float64, error) {
+func (d splitAnchorDecider) ValidateSummary(context.Context, view.Projection, MemoryState) (float64, error) {
 	return d.faithful, nil
 }
 

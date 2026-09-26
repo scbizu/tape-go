@@ -25,16 +25,16 @@ import (
 
 type searchDecider struct{}
 
-func (searchDecider) ShouldAnchor(context.Context, jevext.ViewProjection) (float64, error) {
+func (searchDecider) ShouldAnchor(context.Context, view.Projection) (float64, error) {
 	return 0, nil
 }
-func (searchDecider) ValidateSummary(context.Context, jevext.ViewProjection, jevext.MemoryState) (float64, error) {
+func (searchDecider) ValidateSummary(context.Context, view.Projection, jevext.MemoryState) (float64, error) {
 	return 1, nil
 }
 
 type searchSummarizer struct{}
 
-func (searchSummarizer) Summarize(context.Context, jevext.ViewProjection) (jevext.MemoryState, error) {
+func (searchSummarizer) Summarize(context.Context, view.Projection) (jevext.MemoryState, error) {
 	return jevext.MemoryState{Decisions: []string{"saved"}}, nil
 }
 

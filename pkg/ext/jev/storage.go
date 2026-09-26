@@ -7,6 +7,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/scbizu/tape-go/pkg/llm"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/finder"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
@@ -20,7 +21,7 @@ var (
 
 type Config struct {
 	Decider    AnchorDecider
-	Summarizer Summarizer
+	Summarizer llm.Summarizer
 	Classifier Classifier
 	Threshold  float64
 	OnError    func(error)

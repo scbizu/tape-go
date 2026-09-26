@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
+	"github.com/scbizu/tape-go/pkg/llm"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
@@ -15,18 +15,7 @@ import (
 const Kind entry.EntryKind = "anchor:jev"
 
 // MemoryState is the structured memory retained by a JEV anchor.
-type MemoryState struct {
-	Decisions []string `json:"decisions"`
-}
-
-func (s MemoryState) IsZero() bool {
-	for _, decision := range s.Decisions {
-		if strings.TrimSpace(decision) != "" {
-			return false
-		}
-	}
-	return true
-}
+type MemoryState = llm.Summary
 
 // Anchor is the persisted JEV payload. Its JSON shape matches existing tapes.
 type Anchor struct {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/hashicorp/go-retryablehttp"
 	jevext "github.com/scbizu/tape-go/pkg/ext/jev"
+	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
 const (
@@ -155,7 +156,7 @@ type anchorResponse struct {
 
 // ShouldAnchor asks Jev whether one entry contains durable information worth
 // exposing as a future memory-search candidate.
-func (c *Client) ShouldAnchor(ctx context.Context, projection jevext.ViewProjection) (float64, error) {
+func (c *Client) ShouldAnchor(ctx context.Context, projection view.Projection) (float64, error) {
 	if c == nil || c.httpClient == nil {
 		return 0, errors.New("jev: client is not enabled")
 	}
@@ -163,7 +164,7 @@ func (c *Client) ShouldAnchor(ctx context.Context, projection jevext.ViewProject
 		return 0, errors.New("jev: empty anchor view projection")
 	}
 	payload := struct {
-		State     jevext.ViewProjection   `json:"state"`
+		State     view.Projection         `json:"state"`
 		Model     string                  `json:"model"`
 		Questions map[string]noulQuestion `json:"questions"`
 	}{
@@ -197,7 +198,7 @@ func (c *Client) ShouldAnchor(ctx context.Context, projection jevext.ViewProject
 
 // ValidateSummary asks Jev whether a generated summary is fully supported by
 // its source view and preserves the durable information needed for retrieval.
-func (c *Client) ValidateSummary(ctx context.Context, projection jevext.ViewProjection, summary jevext.MemoryState) (float64, error) {
+func (c *Client) ValidateSummary(ctx context.Context, projection view.Projection, summary jevext.MemoryState) (float64, error) {
 	if c == nil || c.httpClient == nil {
 		return 0, errors.New("jev: client is not enabled")
 	}
@@ -206,8 +207,8 @@ func (c *Client) ValidateSummary(ctx context.Context, projection jevext.ViewProj
 	}
 	payload := struct {
 		State struct {
-			SourceView      jevext.ViewProjection `json:"source_view"`
-			ProposedSummary jevext.MemoryState    `json:"proposed_summary"`
+			SourceView      view.Projection    `json:"source_view"`
+			ProposedSummary jevext.MemoryState `json:"proposed_summary"`
 		} `json:"state"`
 		Model     string                  `json:"model"`
 		Questions map[string]noulQuestion `json:"questions"`

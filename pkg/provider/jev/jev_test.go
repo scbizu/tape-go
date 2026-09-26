@@ -109,7 +109,7 @@ func TestClientShouldAnchor(t *testing.T) {
 
 	httpClient := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		var request struct {
-			State     jevext.ViewProjection   `json:"state"`
+			State     view.Projection         `json:"state"`
 			Questions map[string]noulQuestion `json:"questions"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -126,9 +126,9 @@ func TestClientShouldAnchor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projection := jevext.ViewProjection{
+	projection := view.Projection{
 		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(3)},
-		Entries: []jevext.ViewEntry{
+		Entries: []view.ProjectedEntry{
 			{Seq: entry.SeqFromUint64(1), Kind: entry.EntryUser, Summary: "earlier fact"},
 			{Seq: entry.SeqFromUint64(2), Kind: entry.EntryAssistant, Summary: "durable fact"},
 		},
@@ -148,8 +148,8 @@ func TestClientValidateSummary(t *testing.T) {
 	httpClient := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		var request struct {
 			State struct {
-				SourceView      jevext.ViewProjection `json:"source_view"`
-				ProposedSummary jevext.MemoryState    `json:"proposed_summary"`
+				SourceView      view.Projection    `json:"source_view"`
+				ProposedSummary jevext.MemoryState `json:"proposed_summary"`
 			} `json:"state"`
 			Questions map[string]noulQuestion `json:"questions"`
 		}
@@ -166,9 +166,9 @@ func TestClientValidateSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projection := jevext.ViewProjection{
+	projection := view.Projection{
 		Scope:   view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
-		Entries: []jevext.ViewEntry{{Seq: entry.SeqFromUint64(1), Kind: entry.EntryUser, Summary: "source"}},
+		Entries: []view.ProjectedEntry{{Seq: entry.SeqFromUint64(1), Kind: entry.EntryUser, Summary: "source"}},
 	}
 	got, err := client.ValidateSummary(context.Background(), projection, jevext.MemoryState{Decisions: []string{"summary"}})
 	if err != nil {

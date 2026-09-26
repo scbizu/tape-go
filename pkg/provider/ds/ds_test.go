@@ -2,6 +2,7 @@ package ds
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"testing"
@@ -9,7 +10,6 @@ import (
 	deepseek "github.com/cohesion-org/deepseek-go"
 	"google.golang.org/genai"
 
-	jevext "github.com/scbizu/tape-go/pkg/ext/jev"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 
@@ -161,7 +161,7 @@ func TestModelSummarize(t *testing.T) {
 		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
 		Raw:   []entry.EntryLike{entry.NewEntry(entry.WithEntryContent("fact"))},
 	}
-	projection, err := jevext.ProjectJevView(memory)
+	projection, err := memory.Project()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,6 +176,13 @@ func TestModelSummarize(t *testing.T) {
 		client.request.ResponseFormat == nil || client.request.ResponseFormat.Type != "json_object" {
 		t.Fatalf("unexpected request: %#v", client.request)
 	}
+	var sent view.Projection
+	if err := json.Unmarshal([]byte(client.request.Messages[1].Content), &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent.Scope != projection.Scope || len(sent.Entries) != 1 || sent.Entries[0].Summary != "fact" {
+		t.Fatalf("summarized projection = %#v", sent)
+	}
 }
 
 func TestModelSummarizeRejectsStateWithoutDecision(t *testing.T) {
@@ -184,7 +191,7 @@ func TestModelSummarizeRejectsStateWithoutDecision(t *testing.T) {
 	}}
 	llm := &Model{client: client, name: "deepseek-test"}
 	memory := view.EntryView{Raw: []entry.EntryLike{entry.NewEntry(entry.WithEntryContent("fact"))}}
-	projection, err := jevext.ProjectJevView(memory)
+	projection, err := memory.Project()
 	if err != nil {
 		t.Fatal(err)
 	}
