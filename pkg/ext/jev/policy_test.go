@@ -9,14 +9,10 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
-type fixedAnchorDecider float64
+type fixedAnchorDecider bool
 
-func (d fixedAnchorDecider) ShouldAnchor(context.Context, view.Projection) (float64, error) {
-	return float64(d), nil
-}
-
-func (d fixedAnchorDecider) ValidateSummary(context.Context, view.Projection, MemoryState) (float64, error) {
-	return float64(d), nil
+func (d fixedAnchorDecider) ShouldAnchor(context.Context, view.Projection) (bool, error) {
+	return bool(d), nil
 }
 
 type fixedSummarizer MemoryState
@@ -29,13 +25,9 @@ type recordingAnchorDecider struct {
 	projection view.Projection
 }
 
-func (d *recordingAnchorDecider) ShouldAnchor(_ context.Context, projection view.Projection) (float64, error) {
+func (d *recordingAnchorDecider) ShouldAnchor(_ context.Context, projection view.Projection) (bool, error) {
 	d.projection = projection
-	return .9, nil
-}
-
-func (*recordingAnchorDecider) ValidateSummary(context.Context, view.Projection, MemoryState) (float64, error) {
-	return .9, nil
+	return true, nil
 }
 
 func TestAnchorPolicyDecidesFromWholeView(t *testing.T) {
@@ -53,7 +45,6 @@ func TestAnchorPolicyDecidesFromWholeView(t *testing.T) {
 	_, ok, err := NewAnchorPolicy(
 		decider,
 		fixedSummarizer{Decisions: []string{"retain earlier durable fact"}},
-		.7,
 	).MakeAnchor(context.Background(), latest, view.EntryView{
 		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(4), SeqE: entry.SeqFromUint64(6)},
 		Raw:   []entry.EntryLike{first, latest},
@@ -74,7 +65,7 @@ func TestAnchorPolicyCreatesJevAnchor(t *testing.T) {
 	memoryState := fixedSummarizer{
 		Decisions: []string{"The production database region is Tokyo."},
 	}
-	policy := NewAnchorPolicy(fixedAnchorDecider(.9), memoryState, .7)
+	policy := NewAnchorPolicy(fixedAnchorDecider(true), memoryState)
 	latest := entry.NewEntry(
 		entry.WithEntryID(entry.SeqFromUint64(4)),
 		entry.WithEntryKind(entry.EntryUser),
@@ -106,10 +97,10 @@ func TestAnchorPolicyCreatesJevAnchor(t *testing.T) {
 	}
 }
 
-func TestAnchorPolicyHonorsThreshold(t *testing.T) {
+func TestAnchorPolicySkipsWhenDeciderSaysNo(t *testing.T) {
 	t.Parallel()
 
-	_, ok, err := NewAnchorPolicy(fixedAnchorDecider(.4), fixedSummarizer{Decisions: []string{"unused"}}, .7).MakeAnchor(
+	_, ok, err := NewAnchorPolicy(fixedAnchorDecider(false), fixedSummarizer{Decisions: []string{"unused"}}).MakeAnchor(
 		context.Background(),
 		entry.NewEntry(entry.WithEntryContent("transient")),
 		view.EntryView{
@@ -121,39 +112,7 @@ func TestAnchorPolicyHonorsThreshold(t *testing.T) {
 		t.Fatal(err)
 	}
 	if ok {
-		t.Fatal("entry below threshold was anchored")
-	}
-}
-
-type splitAnchorDecider struct {
-	should, faithful float64
-}
-
-func (d splitAnchorDecider) ShouldAnchor(context.Context, view.Projection) (float64, error) {
-	return d.should, nil
-}
-
-func (d splitAnchorDecider) ValidateSummary(context.Context, view.Projection, MemoryState) (float64, error) {
-	return d.faithful, nil
-}
-
-func TestAnchorPolicyRejectsUnfaithfulSummary(t *testing.T) {
-	t.Parallel()
-
-	e := entry.NewEntry(entry.WithEntryContent("source fact"))
-	_, ok, err := NewAnchorPolicy(
-		splitAnchorDecider{should: .95, faithful: .2},
-		fixedSummarizer{Decisions: []string{"unsupported claim"}},
-		.7,
-	).MakeAnchor(context.Background(), e, view.EntryView{
-		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
-		Raw:   []entry.EntryLike{e},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok {
-		t.Fatal("unfaithful summary became a Jev anchor")
+		t.Fatal("entry rejected by decider was anchored")
 	}
 }
 
@@ -166,9 +125,8 @@ func TestAnchorPolicyValidatesConfiguration(t *testing.T) {
 		name   string
 		policy AnchorPolicy
 	}{
-		{name: "missing decider", policy: NewAnchorPolicy(nil, fixedSummarizer{Decisions: []string{"summary"}}, .7)},
-		{name: "missing summarizer", policy: NewAnchorPolicy(fixedAnchorDecider(.9), nil, .7)},
-		{name: "invalid threshold", policy: NewAnchorPolicy(fixedAnchorDecider(.9), fixedSummarizer{Decisions: []string{"summary"}}, 2)},
+		{name: "missing decider", policy: NewAnchorPolicy(nil, fixedSummarizer{Decisions: []string{"summary"}})},
+		{name: "missing summarizer", policy: NewAnchorPolicy(fixedAnchorDecider(true), nil)},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -23,7 +23,6 @@ type Config struct {
 	Decider    AnchorDecider
 	Summarizer llm.Summarizer
 	Classifier Classifier
-	Threshold  float64
 	OnError    func(error)
 }
 
@@ -49,7 +48,7 @@ func NewStorage(base storage.TapeStorage, activeView *view.EntryView, config Con
 	if base == nil || activeView == nil {
 		return nil, errors.New("jev: storage and active view are required")
 	}
-	policy := NewAnchorPolicy(config.Decider, config.Summarizer, config.Threshold)
+	policy := NewAnchorPolicy(config.Decider, config.Summarizer)
 	if err := validateStructure("anchor policy", policy); err != nil {
 		return nil, err
 	}

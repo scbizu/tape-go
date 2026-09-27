@@ -123,7 +123,7 @@ type question struct {
 	Criteria     []string `json:"criteria"`
 }
 
-type noulQuestion struct {
+type choiceQuestion struct {
 	Type         string            `json:"type"`
 	Instructions string            `json:"instructions"`
 	Criteria     map[string]string `json:"criteria"`
@@ -150,96 +150,57 @@ type classifyResponse struct {
 
 type anchorResponse struct {
 	Answers map[string]struct {
-		Noul float64 `json:"noul"`
+		Choice string `json:"choice"`
 	} `json:"answers"`
 }
 
 // ShouldAnchor asks Jev whether one entry contains durable information worth
 // exposing as a future memory-search candidate.
-func (c *Client) ShouldAnchor(ctx context.Context, projection view.Projection) (float64, error) {
+func (c *Client) ShouldAnchor(ctx context.Context, projection view.Projection) (bool, error) {
 	if c == nil || c.httpClient == nil {
-		return 0, errors.New("jev: client is not enabled")
+		return false, errors.New("jev: client is not enabled")
 	}
 	if len(projection.Entries) == 0 {
-		return 0, errors.New("jev: empty anchor view projection")
+		return false, errors.New("jev: empty anchor view projection")
 	}
 	payload := struct {
-		State     view.Projection         `json:"state"`
-		Model     string                  `json:"model"`
-		Questions map[string]noulQuestion `json:"questions"`
+		State     view.Projection           `json:"state"`
+		Model     string                    `json:"model"`
+		Questions map[string]choiceQuestion `json:"questions"`
 	}{
 		State: projection,
 		Model: c.model,
-		Questions: map[string]noulQuestion{
+		Questions: map[string]choiceQuestion{
 			"should_anchor": {
-				Type:         "noul",
+				Type:         "choice",
 				Instructions: "Should this event be retained as a durable memory point for accurately answering future questions?",
 				Criteria: map[string]string{
-					"true":  "Contains a durable fact, decision, constraint, preference, result, or unresolved task likely to matter later",
-					"false": "Transient conversation, repetition, acknowledgement, or information unlikely to help a future task",
+					"keep": "Contains a durable fact, decision, constraint, preference, result, or unresolved task likely to matter later",
+					"skip": "Transient conversation, repetition, acknowledgement, or information unlikely to help a future task",
 				},
 			},
 		},
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return 0, fmt.Errorf("jev: encode anchor decision: %w", err)
+		return false, fmt.Errorf("jev: encode anchor decision: %w", err)
 	}
 	var response anchorResponse
 	if err := c.post(ctx, body, &response); err != nil {
-		return 0, err
+		return false, err
 	}
 	answer, ok := response.Answers["should_anchor"]
 	if !ok {
-		return 0, errors.New("jev: response missing answer \"should_anchor\"")
+		return false, errors.New("jev: response missing answer \"should_anchor\"")
 	}
-	return answer.Noul, nil
-}
-
-// ValidateSummary asks Jev whether a generated summary is fully supported by
-// its source view and preserves the durable information needed for retrieval.
-func (c *Client) ValidateSummary(ctx context.Context, projection view.Projection, summary jevext.MemoryState) (float64, error) {
-	if c == nil || c.httpClient == nil {
-		return 0, errors.New("jev: client is not enabled")
+	switch answer.Choice {
+	case "keep":
+		return true, nil
+	case "skip":
+		return false, nil
+	default:
+		return false, fmt.Errorf("jev: unexpected anchor choice %q", answer.Choice)
 	}
-	if len(projection.Entries) == 0 || summary.IsZero() {
-		return 0, errors.New("jev: summary validation requires state and summary")
-	}
-	payload := struct {
-		State struct {
-			SourceView      view.Projection    `json:"source_view"`
-			ProposedSummary jevext.MemoryState `json:"proposed_summary"`
-		} `json:"state"`
-		Model     string                  `json:"model"`
-		Questions map[string]noulQuestion `json:"questions"`
-	}{
-		Model: c.model,
-		Questions: map[string]noulQuestion{
-			"is_faithful": {
-				Type:         "noul",
-				Instructions: "Is the proposed summary faithful to the source view and free of unsupported claims or contradictions?",
-				Criteria: map[string]string{
-					"true":  "Every claim is supported by the source view and important durable information is preserved",
-					"false": "Adds unsupported information, contradicts the source, or materially misrepresents it",
-				},
-			},
-		},
-	}
-	payload.State.SourceView = projection
-	payload.State.ProposedSummary = summary
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return 0, fmt.Errorf("jev: encode summary validation: %w", err)
-	}
-	var response anchorResponse
-	if err := c.post(ctx, body, &response); err != nil {
-		return 0, err
-	}
-	answer, ok := response.Answers["is_faithful"]
-	if !ok {
-		return 0, errors.New("jev: response missing answer \"is_faithful\"")
-	}
-	return answer.Noul, nil
 }
 
 // Classify asks Jev to independently score every candidate against the query

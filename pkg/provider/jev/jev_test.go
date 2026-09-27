@@ -109,18 +109,18 @@ func TestClientShouldAnchor(t *testing.T) {
 
 	httpClient := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		var request struct {
-			State     view.Projection         `json:"state"`
-			Questions map[string]noulQuestion `json:"questions"`
+			State     view.Projection           `json:"state"`
+			Questions map[string]choiceQuestion `json:"questions"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
 		question := request.Questions["should_anchor"]
 		if len(request.State.Entries) != 2 || request.State.Entries[0].Summary != "earlier fact" || request.State.Entries[1].Summary != "durable fact" ||
-			question.Type != "noul" || question.Criteria["true"] == "" {
+			question.Type != "choice" || question.Criteria["keep"] == "" || question.Criteria["skip"] == "" {
 			t.Fatalf("unexpected request: %#v", request)
 		}
-		return jsonResponse(http.StatusOK, `{"answers":{"should_anchor":{"type":"noul","noul":0.91}}}`), nil
+		return jsonResponse(http.StatusOK, `{"answers":{"should_anchor":{"type":"choice","choice":"keep"}}}`), nil
 	})
 	client, err := NewClient("secret", WithHTTPClient(httpClient), WithMaxRetries(0))
 	if err != nil {
@@ -137,45 +137,28 @@ func TestClientShouldAnchor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != .91 {
+	if !got {
 		t.Fatalf("ShouldAnchor = %v", got)
 	}
 }
 
-func TestClientValidateSummary(t *testing.T) {
+func TestClientShouldAnchorSkips(t *testing.T) {
 	t.Parallel()
-
-	httpClient := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		var request struct {
-			State struct {
-				SourceView      view.Projection    `json:"source_view"`
-				ProposedSummary jevext.MemoryState `json:"proposed_summary"`
-			} `json:"state"`
-			Questions map[string]noulQuestion `json:"questions"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		if len(request.State.SourceView.Entries) != 1 || len(request.State.ProposedSummary.Decisions) != 1 ||
-			request.State.ProposedSummary.Decisions[0] != "summary" || request.Questions["is_faithful"].Type != "noul" {
-			t.Fatalf("unexpected request: %#v", request)
-		}
-		return jsonResponse(http.StatusOK, `{"answers":{"is_faithful":{"type":"noul","noul":0.96}}}`), nil
+	httpClient := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"answers":{"should_anchor":{"type":"choice","choice":"skip"}}}`), nil
 	})
 	client, err := NewClient("secret", WithHTTPClient(httpClient), WithMaxRetries(0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	projection := view.Projection{
-		Scope:   view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
-		Entries: []view.ProjectedEntry{{Seq: entry.SeqFromUint64(1), Kind: entry.EntryUser, Summary: "source"}},
-	}
-	got, err := client.ValidateSummary(context.Background(), projection, jevext.MemoryState{Decisions: []string{"summary"}})
+	got, err := client.ShouldAnchor(context.Background(), view.Projection{
+		Entries: []view.ProjectedEntry{{Summary: "transient"}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != .96 {
-		t.Fatalf("ValidateSummary = %v", got)
+	if got {
+		t.Fatal("ShouldAnchor accepted a skip decision")
 	}
 }
 

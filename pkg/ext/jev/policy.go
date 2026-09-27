@@ -9,11 +9,10 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
-// AnchorDecider returns the probability that a complete view projection
-// should trigger a durable Jev memory checkpoint.
+// AnchorDecider decides whether a complete view projection should trigger a
+// durable Jev memory checkpoint.
 type AnchorDecider interface {
-	ShouldAnchor(context.Context, view.Projection) (float64, error)
-	ValidateSummary(context.Context, view.Projection, MemoryState) (float64, error)
+	ShouldAnchor(context.Context, view.Projection) (bool, error)
 }
 
 // AnchorPolicy lets Jev decide when to checkpoint, then delegates the
@@ -21,11 +20,10 @@ type AnchorDecider interface {
 type AnchorPolicy struct {
 	Decider    AnchorDecider  `validate:"required"`
 	Summarizer llm.Summarizer `validate:"required"`
-	Threshold  float64        `validate:"gte=0,lte=1"`
 }
 
-func NewAnchorPolicy(decider AnchorDecider, summarizer llm.Summarizer, threshold float64) AnchorPolicy {
-	return AnchorPolicy{Decider: decider, Summarizer: summarizer, Threshold: threshold}
+func NewAnchorPolicy(decider AnchorDecider, summarizer llm.Summarizer) AnchorPolicy {
+	return AnchorPolicy{Decider: decider, Summarizer: summarizer}
 }
 
 func (p AnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike, memory view.EntryView) (entry.EntryLike, bool, error) {
@@ -39,11 +37,11 @@ func (p AnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike, me
 	if err != nil {
 		return nil, false, err
 	}
-	probability, err := p.Decider.ShouldAnchor(ctx, projection)
+	shouldAnchor, err := p.Decider.ShouldAnchor(ctx, projection)
 	if err != nil {
 		return nil, false, err
 	}
-	if probability < p.Threshold {
+	if !shouldAnchor {
 		return nil, false, nil
 	}
 
@@ -53,13 +51,6 @@ func (p AnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike, me
 	}
 	if summary.IsZero() {
 		return nil, false, errors.New("jev: anchor summarizer returned empty memory state")
-	}
-	faithfulness, err := p.Decider.ValidateSummary(ctx, projection, summary)
-	if err != nil {
-		return nil, false, err
-	}
-	if faithfulness < p.Threshold {
-		return nil, false, nil
 	}
 	ownerID := latest.GetOwner()
 	if ownerID == "" {

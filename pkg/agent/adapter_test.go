@@ -25,11 +25,8 @@ import (
 
 type searchDecider struct{}
 
-func (searchDecider) ShouldAnchor(context.Context, view.Projection) (float64, error) {
-	return 0, nil
-}
-func (searchDecider) ValidateSummary(context.Context, view.Projection, jevext.MemoryState) (float64, error) {
-	return 1, nil
+func (searchDecider) ShouldAnchor(context.Context, view.Projection) (bool, error) {
+	return false, nil
 }
 
 type searchSummarizer struct{}
@@ -56,7 +53,7 @@ func TestSearchMemoryUsesConfiguredTapeExtension(t *testing.T) {
 	base.Fs = afero.NewMemMapFs()
 	tape := &tape.Tape{OwnerID: ownerID}
 	decorated, err := jevext.NewStorage(base, &tape.View, jevext.Config{
-		Decider: searchDecider{}, Summarizer: searchSummarizer{}, Classifier: searchClassifier{}, Threshold: .7,
+		Decider: searchDecider{}, Summarizer: searchSummarizer{}, Classifier: searchClassifier{},
 	})
 	if err != nil {
 		t.Fatal(err)

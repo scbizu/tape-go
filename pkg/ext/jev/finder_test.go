@@ -89,8 +89,8 @@ func TestInitDoesNotPublishPartialSnapshot(t *testing.T) {
 	base := finderStore{anchors: []entry.EntryLike{anchor}, anchorErr: errors.New("read failed")}
 	active := &view.EntryView{}
 	store, err := NewStorage(base, active, Config{
-		Decider: fixedAnchorDecider(.9), Summarizer: fixedSummarizer{Decisions: []string{"durable"}},
-		Classifier: &fakeClassifier{}, Threshold: .7,
+		Decider: fixedAnchorDecider(true), Summarizer: fixedSummarizer{Decisions: []string{"durable"}},
+		Classifier: &fakeClassifier{},
 	})
 	if err != nil {
 		t.Fatal(err)
