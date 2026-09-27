@@ -36,7 +36,7 @@ func TestRewindTool(t *testing.T) {
 	}
 
 	for _, text := range []string{"first", "second"} {
-		if err := tape.Store(ctx, entry.NewEntry(
+		if _, err := tape.Store(ctx, entry.NewEntry(
 			entry.WithEntryKind(entry.EntryUser),
 			entry.WithEntryContent(text),
 		)); err != nil {
@@ -44,7 +44,7 @@ func TestRewindTool(t *testing.T) {
 		}
 		runHandoffCommand(t, commands, ctx, HandoffArgs{})
 	}
-	if err := tape.Store(ctx, entry.NewEntry(
+	if _, err := tape.Store(ctx, entry.NewEntry(
 		entry.WithEntryKind(entry.EntryAssistant),
 		entry.WithEntryContent("current"),
 	)); err != nil {

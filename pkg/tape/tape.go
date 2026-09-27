@@ -9,6 +9,7 @@ import (
 	"io"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
+	"github.com/scbizu/tape-go/pkg/tape/finder"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
@@ -30,6 +31,30 @@ type Tape struct {
 
 	readSeq entry.Seq
 	readBuf *bytes.Reader
+}
+
+// Find searches through the outermost configured finder decorator. A tape
+// without one uses the default semantic finder.
+func (t *Tape) Find(ctx context.Context, query string) (view.EntryView, error) {
+	if t == nil || t.TapeStorage == nil {
+		return view.EntryView{}, errors.New("tape: nil storage")
+	}
+	var engine finder.Engine = finder.SemanticPrompt(query)
+	for current := t.TapeStorage; current != nil; {
+		if provider, ok := current.(finder.Provider); ok {
+			engine = provider.Finder(query)
+			break
+		}
+		unwrapper, ok := current.(storage.Unwrapper)
+		if !ok {
+			break
+		}
+		current = unwrapper.Unwrap()
+	}
+	if engine == nil {
+		return view.EntryView{}, errors.New("tape: finder provider returned nil engine")
+	}
+	return engine.Find(ctx, t.TapeStorage)
 }
 
 // Read reads out to `p` as the entry (entries for batch approach ?) bytes.
@@ -68,7 +93,7 @@ func (t *Tape) Write(p []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if err := t.TapeStorage.Store(t.context(), e); err != nil {
+	if _, err := t.TapeStorage.Store(t.context(), e); err != nil {
 		return 0, err
 	}
 	t.View.Scope.SeqE = entry.Seq{}

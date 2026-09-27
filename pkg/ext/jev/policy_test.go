@@ -1,4 +1,4 @@
-package finder
+package jev
 
 import (
 	"context"
@@ -9,36 +9,28 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
-type fixedAnchorDecider float64
+type fixedAnchorDecider bool
 
-func (d fixedAnchorDecider) ShouldAnchor(context.Context, JevViewProjection) (float64, error) {
-	return float64(d), nil
+func (d fixedAnchorDecider) ShouldAnchor(context.Context, view.Projection) (bool, error) {
+	return bool(d), nil
 }
 
-func (d fixedAnchorDecider) ValidateSummary(context.Context, JevViewProjection, entry.JevMemoryState) (float64, error) {
-	return float64(d), nil
-}
+type fixedSummarizer MemoryState
 
-type fixedSummarizer entry.JevMemoryState
-
-func (s fixedSummarizer) Summarize(context.Context, JevViewProjection) (entry.JevMemoryState, error) {
-	return entry.JevMemoryState(s), nil
+func (s fixedSummarizer) Summarize(context.Context, view.Projection) (MemoryState, error) {
+	return MemoryState(s), nil
 }
 
 type recordingAnchorDecider struct {
-	projection JevViewProjection
+	projection view.Projection
 }
 
-func (d *recordingAnchorDecider) ShouldAnchor(_ context.Context, projection JevViewProjection) (float64, error) {
+func (d *recordingAnchorDecider) ShouldAnchor(_ context.Context, projection view.Projection) (bool, error) {
 	d.projection = projection
-	return .9, nil
+	return true, nil
 }
 
-func (*recordingAnchorDecider) ValidateSummary(context.Context, JevViewProjection, entry.JevMemoryState) (float64, error) {
-	return .9, nil
-}
-
-func TestJevAnchorPolicyDecidesFromWholeView(t *testing.T) {
+func TestAnchorPolicyDecidesFromWholeView(t *testing.T) {
 	t.Parallel()
 
 	first := entry.NewEntry(
@@ -50,10 +42,9 @@ func TestJevAnchorPolicyDecidesFromWholeView(t *testing.T) {
 		entry.WithEntryContent("acknowledged"),
 	)
 	decider := &recordingAnchorDecider{}
-	_, ok, err := NewJevAnchorPolicy(
+	_, ok, err := NewAnchorPolicy(
 		decider,
 		fixedSummarizer{Decisions: []string{"retain earlier durable fact"}},
-		.7,
 	).MakeAnchor(context.Background(), latest, view.EntryView{
 		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(4), SeqE: entry.SeqFromUint64(6)},
 		Raw:   []entry.EntryLike{first, latest},
@@ -68,13 +59,13 @@ func TestJevAnchorPolicyDecidesFromWholeView(t *testing.T) {
 	}
 }
 
-func TestJevAnchorPolicyCreatesJevAnchor(t *testing.T) {
+func TestAnchorPolicyCreatesJevAnchor(t *testing.T) {
 	t.Parallel()
 
 	memoryState := fixedSummarizer{
 		Decisions: []string{"The production database region is Tokyo."},
 	}
-	policy := NewJevAnchorPolicy(fixedAnchorDecider(.9), memoryState, .7)
+	policy := NewAnchorPolicy(fixedAnchorDecider(true), memoryState)
 	latest := entry.NewEntry(
 		entry.WithEntryID(entry.SeqFromUint64(4)),
 		entry.WithEntryKind(entry.EntryUser),
@@ -92,10 +83,10 @@ func TestJevAnchorPolicyCreatesJevAnchor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || anchor.GetKind() != entry.EntryKind(entry.AnchorKindJev.String()) {
+	if !ok || anchor.GetKind() != entry.EntryKind(string(Kind)) {
 		t.Fatalf("anchor = %#v, ok = %v", anchor, ok)
 	}
-	var payload entry.JevAnchor
+	var payload Anchor
 	if err := json.Unmarshal([]byte(anchor.GetSummary()), &payload); err != nil {
 		t.Fatal(err)
 	}
@@ -106,10 +97,10 @@ func TestJevAnchorPolicyCreatesJevAnchor(t *testing.T) {
 	}
 }
 
-func TestJevAnchorPolicyHonorsThreshold(t *testing.T) {
+func TestAnchorPolicySkipsWhenDeciderSaysNo(t *testing.T) {
 	t.Parallel()
 
-	_, ok, err := NewJevAnchorPolicy(fixedAnchorDecider(.4), fixedSummarizer{Decisions: []string{"unused"}}, .7).MakeAnchor(
+	_, ok, err := NewAnchorPolicy(fixedAnchorDecider(false), fixedSummarizer{Decisions: []string{"unused"}}).MakeAnchor(
 		context.Background(),
 		entry.NewEntry(entry.WithEntryContent("transient")),
 		view.EntryView{
@@ -121,54 +112,21 @@ func TestJevAnchorPolicyHonorsThreshold(t *testing.T) {
 		t.Fatal(err)
 	}
 	if ok {
-		t.Fatal("entry below threshold was anchored")
+		t.Fatal("entry rejected by decider was anchored")
 	}
 }
 
-type splitAnchorDecider struct {
-	should, faithful float64
-}
-
-func (d splitAnchorDecider) ShouldAnchor(context.Context, JevViewProjection) (float64, error) {
-	return d.should, nil
-}
-
-func (d splitAnchorDecider) ValidateSummary(context.Context, JevViewProjection, entry.JevMemoryState) (float64, error) {
-	return d.faithful, nil
-}
-
-func TestJevAnchorPolicyRejectsUnfaithfulSummary(t *testing.T) {
-	t.Parallel()
-
-	e := entry.NewEntry(entry.WithEntryContent("source fact"))
-	_, ok, err := NewJevAnchorPolicy(
-		splitAnchorDecider{should: .95, faithful: .2},
-		fixedSummarizer{Decisions: []string{"unsupported claim"}},
-		.7,
-	).MakeAnchor(context.Background(), e, view.EntryView{
-		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
-		Raw:   []entry.EntryLike{e},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok {
-		t.Fatal("unfaithful summary became a Jev anchor")
-	}
-}
-
-func TestJevAnchorPolicyValidatesConfiguration(t *testing.T) {
+func TestAnchorPolicyValidatesConfiguration(t *testing.T) {
 	t.Parallel()
 
 	e := entry.NewEntry(entry.WithEntryContent("source fact"))
 	memory := view.EntryView{Raw: []entry.EntryLike{e}}
 	tests := []struct {
 		name   string
-		policy JevAnchorPolicy
+		policy AnchorPolicy
 	}{
-		{name: "missing decider", policy: NewJevAnchorPolicy(nil, fixedSummarizer{Decisions: []string{"summary"}}, .7)},
-		{name: "missing summarizer", policy: NewJevAnchorPolicy(fixedAnchorDecider(.9), nil, .7)},
-		{name: "invalid threshold", policy: NewJevAnchorPolicy(fixedAnchorDecider(.9), fixedSummarizer{Decisions: []string{"summary"}}, 2)},
+		{name: "missing decider", policy: NewAnchorPolicy(nil, fixedSummarizer{Decisions: []string{"summary"}})},
+		{name: "missing summarizer", policy: NewAnchorPolicy(fixedAnchorDecider(true), nil)},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -382,7 +382,7 @@ func isA2AKind(kind entry.EntryKind) bool {
 func (s *Store) append(ctx context.Context, cached *ownerProjection, record *tapeRecord) (taskstore.TaskVersion, error) {
 	tapeEntry := record.entry()
 	tapeEntry.Timestamp = s.now()
-	if err := s.storage.Store(ctx, tapeEntry); err != nil {
+	if _, err := s.storage.Store(ctx, tapeEntry); err != nil {
 		return taskstore.TaskVersionMissing, fmt.Errorf("a2a tape: append record %s: %w", record.RecordID, err)
 	}
 	state, err := s.syncProjection(ctx, cached)

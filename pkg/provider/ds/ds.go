@@ -15,8 +15,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/scbizu/tape-go/pkg/llm"
-	"github.com/scbizu/tape-go/pkg/tape/entry"
-	"github.com/scbizu/tape-go/pkg/tape/finder"
+	"github.com/scbizu/tape-go/pkg/tape/view"
 
 	"google.golang.org/adk/model"
 )
@@ -33,7 +32,7 @@ type Model struct {
 
 var _ model.LLM = (*Model)(nil)
 var _ llm.Model = (*Model)(nil)
-var _ finder.JevSummarizer = (*Model)(nil)
+var _ llm.Summarizer = (*Model)(nil)
 
 var ErrEmbeddingUnsupported = errors.New("ds: embedding is not supported")
 
@@ -99,20 +98,20 @@ func (m *Model) ReRank(ctx context.Context, query string, candidates []string) (
 	return rerankByOrder(candidates, resp.Choices[0].Message.Content)
 }
 
-func (m *Model) Summarize(ctx context.Context, projection finder.JevViewProjection) (entry.JevMemoryState, error) {
+func (m *Model) Summarize(ctx context.Context, projection view.Projection) (llm.Summary, error) {
 	if !m.IsEnable() {
-		return entry.JevMemoryState{}, errors.New("ds: model is not enabled")
+		return llm.Summary{}, errors.New("ds: model is not enabled")
 	}
 	state, err := json.Marshal(projection)
 	if err != nil {
-		return entry.JevMemoryState{}, fmt.Errorf("ds: encode view projection: %w", err)
+		return llm.Summary{}, fmt.Errorf("ds: encode view projection: %w", err)
 	}
 	resp, err := m.client.CreateChatCompletion(ctx, &deepseek.ChatCompletionRequest{
 		Model: m.name,
 		Messages: []deepseek.ChatCompletionMessage{
 			{
 				Role: deepseek.ChatMessageRoleSystem,
-				Content: "Summarize the supplied tape view faithfully and compactly as a JSON object for future Jev retrieval. " +
+				Content: "Summarize the supplied tape view faithfully and compactly as a JSON object for future retrieval. " +
 					"Return one field: decisions (array of strings). Each decision must be a self-contained statement of durable information worth retrieving later, including concrete facts, constraints, preferences, results, or unfinished work when present. " +
 					"Include at least one decision and preserve concrete names and values. " +
 					"Do not infer or add information that is not present. Return JSON only.",
@@ -124,21 +123,21 @@ func (m *Model) Summarize(ctx context.Context, projection finder.JevViewProjecti
 		MaxTokens:      1024,
 	})
 	if err != nil {
-		return entry.JevMemoryState{}, fmt.Errorf("ds: summarize: %w", err)
+		return llm.Summary{}, fmt.Errorf("ds: summarize: %w", err)
 	}
 	if len(resp.Choices) == 0 {
-		return entry.JevMemoryState{}, errors.New("ds: summarize empty response")
+		return llm.Summary{}, errors.New("ds: summarize empty response")
 	}
 	summary := strings.TrimSpace(resp.Choices[0].Message.Content)
 	if summary == "" {
-		return entry.JevMemoryState{}, errors.New("ds: summarize empty content")
+		return llm.Summary{}, errors.New("ds: summarize empty content")
 	}
-	var memory entry.JevMemoryState
+	var memory llm.Summary
 	if err := json.Unmarshal([]byte(summary), &memory); err != nil {
-		return entry.JevMemoryState{}, fmt.Errorf("ds: summarize invalid memory state: %w", err)
+		return llm.Summary{}, fmt.Errorf("ds: summarize invalid summary: %w", err)
 	}
 	if memory.IsZero() {
-		return entry.JevMemoryState{}, errors.New("ds: summarize returned memory state without a decision")
+		return llm.Summary{}, errors.New("ds: summarize returned no decision")
 	}
 	return memory, nil
 }

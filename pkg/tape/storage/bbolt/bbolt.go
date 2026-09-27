@@ -9,13 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"math/big"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
-	"github.com/scbizu/tape-go/pkg/tape/finder"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
@@ -23,16 +23,12 @@ import (
 )
 
 var _ storage.TapeStorage = (*Bbolt)(nil)
-var _ storage.StoreResultStorage = (*Bbolt)(nil)
-var _ finder.AnchorSnapshotReader = (*Bbolt)(nil)
 
 var (
-	entriesBucket      = []byte("entries")
-	anchorsBucket      = []byte("anchors")
-	jevSnapshotBucket  = []byte("jev_snapshot")
-	metaBucket         = []byte("meta")
-	stateKey           = []byte("state")
-	snapshotVersionKey = []byte("jev_snapshot_version")
+	entriesBucket = []byte("entries")
+	anchorsBucket = []byte("anchors")
+	metaBucket    = []byte("meta")
+	stateKey      = []byte("state")
 )
 
 type Bbolt struct {
@@ -73,40 +69,13 @@ func (b *Bbolt) Init(ctx context.Context) error {
 		return err
 	}
 	return b.db.Update(func(tx *bolt.Tx) error {
-		for _, name := range [][]byte{entriesBucket, anchorsBucket, jevSnapshotBucket, metaBucket} {
+		for _, name := range [][]byte{entriesBucket, anchorsBucket, metaBucket} {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return fmt.Errorf("create bucket %s: %w", name, err)
 			}
 		}
-		meta, err := sessionBucket(tx, metaBucket, ownerID, b.sessionID, true)
-		if err != nil {
-			return err
-		}
-		if meta.Get(snapshotVersionKey) != nil {
-			return nil
-		}
-		anchors, err := sessionBucket(tx, anchorsBucket, ownerID, b.sessionID, true)
-		if err != nil {
-			return err
-		}
-		snapshot, err := sessionBucket(tx, jevSnapshotBucket, ownerID, b.sessionID, true)
-		if err != nil {
-			return err
-		}
-		if err := anchors.ForEach(func(key, value []byte) error {
-			e, err := decodeEntry(value)
-			if err != nil {
-				return err
-			}
-			anchor, ok := finder.JevAnchorFromEntry(e)
-			if !ok {
-				return nil
-			}
-			return updateJevSnapshot(snapshot, key, value, anchor)
-		}); err != nil {
-			return err
-		}
-		return meta.Put(snapshotVersionKey, []byte{1})
+		_, err := sessionBucket(tx, metaBucket, ownerID, b.sessionID, true)
+		return err
 	})
 }
 
@@ -135,14 +104,7 @@ func (b *Bbolt) Get(ctx context.Context) (view.TapeView, error) {
 	}, nil
 }
 
-// Store is retained for callers that only need an error.
-// Deprecated: use StoreWithResult.
-func (b *Bbolt) Store(ctx context.Context, e entry.EntryLike) error {
-	_, err := b.StoreWithResult(ctx, e)
-	return err
-}
-
-func (b *Bbolt) StoreWithResult(ctx context.Context, e entry.EntryLike) (entry.EntryLike, error) {
+func (b *Bbolt) Store(ctx context.Context, e entry.EntryLike) (entry.EntryLike, error) {
 	if e == nil {
 		return nil, errors.New("bbolt: nil entry")
 	}
@@ -159,10 +121,6 @@ func (b *Bbolt) StoreWithResult(ctx context.Context, e entry.EntryLike) (entry.E
 			return err
 		}
 		anchors, err := sessionBucket(tx, anchorsBucket, ownerID, b.sessionID, true)
-		if err != nil {
-			return err
-		}
-		snapshot, err := sessionBucket(tx, jevSnapshotBucket, ownerID, b.sessionID, true)
 		if err != nil {
 			return err
 		}
@@ -196,11 +154,6 @@ func (b *Bbolt) StoreWithResult(ctx context.Context, e entry.EntryLike) (entry.E
 		if e.GetKind().IsAnchor() {
 			if err := anchors.Put(key, data); err != nil {
 				return fmt.Errorf("bbolt: store anchor: %w", err)
-			}
-			if anchor, ok := finder.JevAnchorFromEntry(e); ok {
-				if err := updateJevSnapshot(snapshot, key, data, anchor); err != nil {
-					return fmt.Errorf("bbolt: update Jev snapshot: %w", err)
-				}
 			}
 		}
 		if e.GetID().Cmp(state.LastSeq) > 0 {
@@ -260,44 +213,41 @@ func (b *Bbolt) Range(ctx context.Context, r view.EntryRange, opts ...storage.Ra
 	return out, err
 }
 
-func (b *Bbolt) AnchorSnapshot(ctx context.Context) (finder.AnchorSnapshot, error) {
-	ownerID, err := owner.GetOwnerId(ctx)
-	if err != nil {
-		return finder.AnchorSnapshot{}, err
-	}
-	if b.db == nil {
-		return finder.AnchorSnapshot{}, errors.New("bbolt: storage is not initialized")
-	}
-	var result finder.AnchorSnapshot
-	err = b.db.View(func(tx *bolt.Tx) error {
-		snapshot, err := sessionBucket(tx, jevSnapshotBucket, ownerID, b.sessionID, false)
-		if err != nil || snapshot == nil {
-			return err
+func (b *Bbolt) Anchors(ctx context.Context) iter.Seq2[entry.EntryLike, error] {
+	return func(yield func(entry.EntryLike, error) bool) {
+		ownerID, err := owner.GetOwnerId(ctx)
+		if err != nil {
+			yield(nil, err)
+			return
 		}
-		return snapshot.ForEach(func(_, value []byte) error {
-			if err := ctx.Err(); err != nil {
+		if b.db == nil {
+			yield(nil, errors.New("bbolt: storage is not initialized"))
+			return
+		}
+		err = b.db.View(func(tx *bolt.Tx) error {
+			anchors, err := sessionBucket(tx, anchorsBucket, ownerID, b.sessionID, false)
+			if err != nil || anchors == nil {
 				return err
 			}
-			e, err := decodeEntry(value)
-			if err != nil {
-				return err
-			}
-			if anchor, ok := finder.JevAnchorFromEntry(e); ok {
-				result.Anchors = append(result.Anchors, anchor)
+			cursor := anchors.Cursor()
+			for _, value := cursor.First(); value != nil; _, value = cursor.Next() {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				e, err := decodeEntry(value)
+				if err != nil {
+					return err
+				}
+				if !yield(e, nil) {
+					return nil
+				}
 			}
 			return nil
 		})
-	})
-	return result, err
-}
-
-func updateJevSnapshot(snapshot *bolt.Bucket, key, value []byte, anchor finder.JevAnchorRecord) error {
-	for _, replaced := range anchor.Replaces {
-		if err := snapshot.Delete(seqKey(replaced)); err != nil {
-			return err
+		if err != nil {
+			yield(nil, err)
 		}
 	}
-	return snapshot.Put(key, value)
 }
 
 func (b *Bbolt) Rewind(ctx context.Context, opts ...storage.RewindBy) (view.EntryRange, error) {

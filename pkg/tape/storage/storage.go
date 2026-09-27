@@ -4,6 +4,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"iter"
 	"time"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
@@ -13,21 +14,17 @@ import (
 var ErrNoAnchor = errors.New("storage: no anchor")
 
 type EntryStorage interface {
-	// Deprecated: use StoreWithResult when the storage supports it. Store is
-	// retained for callers that only need an error.
-	Store(context.Context, entry.EntryLike) error
+	// Store reports the entry as persisted, including its assigned ID.
+	Store(context.Context, entry.EntryLike) (entry.EntryLike, error)
 	Range(context.Context, view.EntryRange, ...RangeBy) (view.EntryView, error)
-}
-
-// StoreResultStorage reports the entry as it was persisted, including an ID
-// assigned by the storage.
-type StoreResultStorage interface {
-	StoreWithResult(context.Context, entry.EntryLike) (entry.EntryLike, error)
 }
 
 type TapeStorage interface {
 	Init(context.Context) error
 	Get(context.Context) (view.TapeView, error)
+	// Anchors enumerates the persisted anchors for the current owner and session
+	// in ascending entry ID order. An error is yielded once before iteration ends.
+	Anchors(context.Context) iter.Seq2[entry.EntryLike, error]
 	// Rewind gets the latest `anchor` context from `seq` back to the current context window
 	Rewind(ctx context.Context, opts ...RewindBy) (view.EntryRange, error)
 	// TODO: Mask marks the time-period from a tape as low-priority
@@ -37,7 +34,11 @@ type TapeStorage interface {
 	//
 	// TapeStorage should also hold the storage of entries
 	EntryStorage
-	StoreResultStorage
+}
+
+// Unwrapper exposes the next storage in a decorator chain.
+type Unwrapper interface {
+	Unwrap() TapeStorage
 }
 
 type SessionID string

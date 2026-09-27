@@ -11,8 +11,8 @@ import (
 	"testing"
 	"uuid"
 
+	jevext "github.com/scbizu/tape-go/pkg/ext/jev"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
-	"github.com/scbizu/tape-go/pkg/tape/finder"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
@@ -37,8 +37,8 @@ func jsonResponse(status int, body string) *http.Response {
 	}
 }
 
-func collectClassifications(seq iter.Seq2[finder.Classification, error]) ([]finder.Classification, error) {
-	var results []finder.Classification
+func collectClassifications(seq iter.Seq2[jevext.Classification, error]) ([]jevext.Classification, error) {
+	var results []jevext.Classification
 	for result, err := range seq {
 		if err != nil {
 			return nil, err
@@ -93,7 +93,7 @@ func TestClientClassify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := collectClassifications(client.Classify(context.Background(), "database failure", []entry.JevMemoryState{
+	got, err := collectClassifications(client.Classify(context.Background(), "database failure", []jevext.MemoryState{
 		{Decisions: []string{"old memory"}}, {Decisions: []string{"best memory"}}, {Decisions: []string{"related memory"}},
 	}))
 	if err != nil {
@@ -109,26 +109,26 @@ func TestClientShouldAnchor(t *testing.T) {
 
 	httpClient := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		var request struct {
-			State     finder.JevViewProjection `json:"state"`
-			Questions map[string]noulQuestion  `json:"questions"`
+			State     view.Projection           `json:"state"`
+			Questions map[string]choiceQuestion `json:"questions"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
 		question := request.Questions["should_anchor"]
 		if len(request.State.Entries) != 2 || request.State.Entries[0].Summary != "earlier fact" || request.State.Entries[1].Summary != "durable fact" ||
-			question.Type != "noul" || question.Criteria["true"] == "" {
+			question.Type != "choice" || question.Criteria["keep"] == "" || question.Criteria["skip"] == "" {
 			t.Fatalf("unexpected request: %#v", request)
 		}
-		return jsonResponse(http.StatusOK, `{"answers":{"should_anchor":{"type":"noul","noul":0.91}}}`), nil
+		return jsonResponse(http.StatusOK, `{"answers":{"should_anchor":{"type":"choice","choice":"keep"}}}`), nil
 	})
 	client, err := NewClient("secret", WithHTTPClient(httpClient), WithMaxRetries(0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	projection := finder.JevViewProjection{
+	projection := view.Projection{
 		Scope: view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(3)},
-		Entries: []finder.JevViewEntry{
+		Entries: []view.ProjectedEntry{
 			{Seq: entry.SeqFromUint64(1), Kind: entry.EntryUser, Summary: "earlier fact"},
 			{Seq: entry.SeqFromUint64(2), Kind: entry.EntryAssistant, Summary: "durable fact"},
 		},
@@ -137,45 +137,28 @@ func TestClientShouldAnchor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != .91 {
+	if !got {
 		t.Fatalf("ShouldAnchor = %v", got)
 	}
 }
 
-func TestClientValidateSummary(t *testing.T) {
+func TestClientShouldAnchorSkips(t *testing.T) {
 	t.Parallel()
-
-	httpClient := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		var request struct {
-			State struct {
-				SourceView      finder.JevViewProjection `json:"source_view"`
-				ProposedSummary entry.JevMemoryState     `json:"proposed_summary"`
-			} `json:"state"`
-			Questions map[string]noulQuestion `json:"questions"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		if len(request.State.SourceView.Entries) != 1 || len(request.State.ProposedSummary.Decisions) != 1 ||
-			request.State.ProposedSummary.Decisions[0] != "summary" || request.Questions["is_faithful"].Type != "noul" {
-			t.Fatalf("unexpected request: %#v", request)
-		}
-		return jsonResponse(http.StatusOK, `{"answers":{"is_faithful":{"type":"noul","noul":0.96}}}`), nil
+	httpClient := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"answers":{"should_anchor":{"type":"choice","choice":"skip"}}}`), nil
 	})
 	client, err := NewClient("secret", WithHTTPClient(httpClient), WithMaxRetries(0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	projection := finder.JevViewProjection{
-		Scope:   view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2)},
-		Entries: []finder.JevViewEntry{{Seq: entry.SeqFromUint64(1), Kind: entry.EntryUser, Summary: "source"}},
-	}
-	got, err := client.ValidateSummary(context.Background(), projection, entry.JevMemoryState{Decisions: []string{"summary"}})
+	got, err := client.ShouldAnchor(context.Background(), view.Projection{
+		Entries: []view.ProjectedEntry{{Summary: "transient"}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != .96 {
-		t.Fatalf("ValidateSummary = %v", got)
+	if got {
+		t.Fatal("ShouldAnchor accepted a skip decision")
 	}
 }
 
@@ -206,7 +189,7 @@ func TestClientRetriesRateLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collectClassifications(client.Classify(context.Background(), "query", []entry.JevMemoryState{{Decisions: []string{"hit"}}})); err != nil {
+	if _, err := collectClassifications(client.Classify(context.Background(), "query", []jevext.MemoryState{{Decisions: []string{"hit"}}})); err != nil {
 		t.Fatal(err)
 	}
 	if attempts != 2 {
@@ -225,7 +208,7 @@ func TestClientReturnsAPIError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = collectClassifications(client.Classify(context.Background(), "query", []entry.JevMemoryState{{Decisions: []string{"hit"}}}))
+	_, err = collectClassifications(client.Classify(context.Background(), "query", []jevext.MemoryState{{Decisions: []string{"hit"}}}))
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("Classify error = %v", err)
@@ -247,7 +230,7 @@ func TestClientReturnsResponseReadError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = collectClassifications(client.Classify(context.Background(), "query", []entry.JevMemoryState{{Decisions: []string{"hit"}}}))
+	_, err = collectClassifications(client.Classify(context.Background(), "query", []jevext.MemoryState{{Decisions: []string{"hit"}}}))
 	if !errors.Is(err, want) {
 		t.Fatalf("Classify error = %v, want response read error", err)
 	}

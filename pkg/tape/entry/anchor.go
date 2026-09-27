@@ -3,7 +3,6 @@ package entry
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -12,7 +11,6 @@ type AnchorKind uint32
 const (
 	AnchorKindHandoff AnchorKind = iota + 1
 	AnchorKindCustom
-	AnchorKindJev
 )
 
 func (ak AnchorKind) String() string {
@@ -21,8 +19,6 @@ func (ak AnchorKind) String() string {
 		return "anchor:handoff"
 	case AnchorKindCustom:
 		return "anchor:custom"
-	case AnchorKindJev:
-		return "anchor:jev"
 	}
 	panic(fmt.Sprintf("unknown anchor kind: %d", ak))
 }
@@ -61,40 +57,4 @@ func NewAnchor(
 type HandoffAnchor struct {
 	Summary    string
 	SeqS, SeqE Seq
-}
-
-// JevMemoryState holds concrete retrieval decisions generated for Jev.
-type JevMemoryState struct {
-	Decisions []string `json:"decisions"`
-}
-
-func (s JevMemoryState) IsZero() bool {
-	for _, decision := range s.Decisions {
-		if strings.TrimSpace(decision) != "" {
-			return false
-		}
-	}
-	return true
-}
-
-// JevAnchor is a classifier-triggered memory checkpoint. Unlike a handoff
-// anchor, it does not change the active view and is only consumed by Jev search.
-type JevAnchor struct {
-	State      JevMemoryState
-	SeqS, SeqE Seq
-	// Replaces names older Jev anchors whose information this anchor preserves.
-	// The old entries remain on tape for rewind and provenance.
-	Replaces []Seq
-}
-
-// NewJevAnchor constructs an anchor:jev entry from its typed payload.
-func NewJevAnchor(seq Seq, owner string, anchor JevAnchor) (Entry, error) {
-	if anchor.State.IsZero() {
-		return Entry{}, fmt.Errorf("entry: Jev anchor state is empty")
-	}
-	payload, err := json.Marshal(anchor)
-	if err != nil {
-		return Entry{}, fmt.Errorf("entry: encode Jev anchor: %w", err)
-	}
-	return NewAnchor(seq, owner, AnchorKindJev, payload), nil
 }
