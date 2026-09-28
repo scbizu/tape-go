@@ -45,6 +45,20 @@ type storageBackend struct {
 
 func main() {
 	ctx := owner.WithOwnerId(context.Background(), ownerID)
+	if len(os.Args) > 1 && os.Args[1] == "jev" {
+		jevKey, err := jevAPIKey(configPath())
+		if err != nil {
+			log.Fatal(err)
+		}
+		deepSeekKey, err := optionalDeepSeekAPIKey(configPath())
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := runJevE2E(ctx, deepSeekKey, jevKey); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	apiKey, err := deepSeekAPIKey(configPath())
 	if err != nil {
 		log.Fatal(err)
@@ -349,6 +363,17 @@ func (m chatUI) send(text string) tea.Cmd {
 }
 
 func deepSeekAPIKey(path string) (string, error) {
+	key, err := optionalDeepSeekAPIKey(path)
+	if err != nil {
+		return "", err
+	}
+	if key == "" {
+		return "", fmt.Errorf("DEEPSEEK_API_KEY or provider.deepseek.api_key in %s is required", path)
+	}
+	return key, nil
+}
+
+func optionalDeepSeekAPIKey(path string) (string, error) {
 	if apiKey := os.Getenv("DEEPSEEK_API_KEY"); apiKey != "" {
 		return apiKey, nil
 	}
@@ -365,9 +390,6 @@ func deepSeekAPIKey(path string) (string, error) {
 	}
 	if err := toml.Unmarshal(data, &config); err != nil {
 		return "", fmt.Errorf("parse DeepSeek config %s: %w", path, err)
-	}
-	if config.Provider.DeepSeek.APIKey == "" {
-		return "", fmt.Errorf("DEEPSEEK_API_KEY or provider.deepseek.api_key in %s is required", path)
 	}
 	return config.Provider.DeepSeek.APIKey, nil
 }
