@@ -200,6 +200,17 @@ func TestModelSummarizeRejectsStateWithoutDecision(t *testing.T) {
 	}
 }
 
+func TestModelSummarizeRejectsTruncatedResponse(t *testing.T) {
+	client := &fakeClient{response: &deepseek.ChatCompletionResponse{
+		Choices: []deepseek.Choice{{FinishReason: "length", Message: deepseek.Message{Content: `{"decisions":["partial"]}`}}},
+	}}
+	model := &Model{client: client, name: "deepseek-test"}
+	projection := view.Projection{Entries: []view.ProjectedEntry{{Summary: "fact"}}}
+	if _, err := model.Summarize(context.Background(), projection); err == nil {
+		t.Fatal("Summarize accepted a response cut off at the token limit")
+	}
+}
+
 func TestBuildRequestKeepsMatchedToolResponse(t *testing.T) {
 	req, err := buildRequest("deepseek-test", &model.LLMRequest{Contents: []*genai.Content{
 		{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{
