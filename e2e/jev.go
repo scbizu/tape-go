@@ -31,6 +31,9 @@ func runJevE2E(ctx context.Context, deepSeekKey, jevKey string) error {
 			return err
 		}
 		summarizer = model
+		fmt.Printf("JEV summarizer: DeepSeek (%s)\n", model.Name())
+	} else {
+		fmt.Println("JEV summarizer: deterministic projection")
 	}
 	client, err := jevprovider.NewClient(jevKey)
 	if err != nil {

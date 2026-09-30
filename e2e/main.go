@@ -382,6 +382,9 @@ func optionalDeepSeekAPIKey(path string) (string, error) {
 		return "", fmt.Errorf("read DeepSeek config %s: %w", path, err)
 	}
 	var config struct {
+		DeepSeek struct {
+			APIKey string `toml:"api_key"`
+		} `toml:"deepseek"`
 		Provider struct {
 			DeepSeek struct {
 				APIKey string `toml:"api_key"`
@@ -391,7 +394,10 @@ func optionalDeepSeekAPIKey(path string) (string, error) {
 	if err := toml.Unmarshal(data, &config); err != nil {
 		return "", fmt.Errorf("parse DeepSeek config %s: %w", path, err)
 	}
-	return config.Provider.DeepSeek.APIKey, nil
+	if config.Provider.DeepSeek.APIKey != "" {
+		return config.Provider.DeepSeek.APIKey, nil
+	}
+	return config.DeepSeek.APIKey, nil
 }
 
 func configPath() string {
