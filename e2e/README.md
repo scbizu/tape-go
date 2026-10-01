@@ -1,20 +1,31 @@
-# E2E demos
+# Manual tape golden scenarios
 
-Run the JEV integration scenario from the repository root:
+Run the provider-independent storage scenario from the repository root. It needs no API keys:
 
 ```sh
-JEV_API_KEY=... go run ./e2e jev
+go run ./e2e golden storage
 ```
 
-The JEV key can also be set as `jev.api_key` or `provider.jev.api_key` in the ignored `e2e/config.toml`. With only a JEV key, the scenario uses a deterministic projection summary. To use DeepSeek summarization, provide `DEEPSEEK_API_KEY`, `deepseek.api_key`, or `provider.deepseek.api_key`; `DEEPSEEK_MODEL` optionally selects the model.
+Run the JEV retrieval scenario with local provider credentials:
 
-The manual golden experiment uses [The Lantern Road](testdata/jev_golden.json), an original fantasy expedition told in 100 source entries across 20 five-entry scenes. Recurring characters encounter different passwords, fares, bells, routes, supplies, and promises. The fixture includes 20 golden queries with explicit expected source entry IDs, covering the beginning, middle, and end of the tape.
+```sh
+go run ./e2e golden jev
+```
 
-For each of JSONL and bbolt, the experiment:
+`go run ./e2e jev` remains an alias. The JEV key can be set via `JEV_API_KEY`, `jev.api_key`, or `provider.jev.api_key` in the ignored `e2e/config.toml`. With only a JEV key, the scenario uses a deterministic projection summary. For DeepSeek summaries, provide `DEEPSEEK_API_KEY`, `deepseek.api_key`, or `provider.deepseek.api_key`; `DEEPSEEK_MODEL` optionally selects the model. Summary and reranking output budgets come from the provider's `/models` output metadata, cached per client. Compatible endpoints without that metadata use their own defaults.
 
-- Gives JEV one checkpoint opportunity at the end of each scene. JEV decides whether to keep the complete scene, and the configured summarizer creates its memory state. Anchors are generated through the storage decorator, rather than inserted as fixtures.
-- Requires 100 unchanged source entries and at least 20 persisted JEV anchors. Each anchor must cover its own bounded scene. This means at least 120 persisted entries including the derived anchors.
-- Runs all 20 queries against the full anchor collection. Each selected view must include its expected source entry and must not contain entries from another scene. The golden values are source IDs, rather than exact generated summary text.
-- Closes and reopens the tape, verifies that source entries and anchor IDs, states, and scopes survive unchanged, then repeats every query. All 80 retrieval checks across both backends and phases must pass.
+Both scenarios use [The Lantern Road](testdata/tape_golden.json), an original fantasy expedition told in 100 source entries across 20 five-entry scenes. Recurring characters encounter different passwords, fares, bells, routes, supplies, and promises. Its 20 golden queries specify expected source entry IDs. The fixture contains source data and expectations, without a JEV-specific anchor requirement.
 
-The command prints ingestion progress, individual query results, and phase totals. Each backend retains its temporary tape and a `report.json` containing generated anchor states, expected and returned source IDs, timings, and failures; the directory path is printed. A missing anchor, storage error, or incorrect retrieval causes a nonzero exit status. No Go `*_test.go` file is needed for this manual experiment.
+The shared runner is [`pkg/tape/testsuite`](../pkg/tape/testsuite). It accepts fixtures of arbitrary size with contiguous windows of variable length. For each backend, it writes the fixture, verifies unchanged source IDs, kinds, content, and order, then closes and reopens the tape and repeats persistence validation. Derived anchor IDs, kinds, and contents must survive unchanged. When a search adapter is supplied, every golden query runs before and after restart; its result must contain the expected source entry and exclude unrelated windows. Golden values are source IDs, rather than exact generated summary text.
+
+The storage scenario exercises JSONL and bbolt persistence with the same 100-entry fixture. It does not require anchors or execute semantic searches, and its report explicitly marks search coverage as disabled.
+
+The JEV scenario supplies a checkpoint policy, anchor validator, and `Tape.Find` search adapter to that shared runner:
+
+- Each scene ending is a checkpoint opportunity. JEV makes the real keep/skip decision for the complete scene, and the configured summarizer builds its memory state.
+- At least 20 JEV anchors must be generated through the storage decorator. Each must cover one distinct bounded scene. With the 100 source entries, this produces at least 120 persisted entries.
+- All 20 queries must pass both before and after restart on JSONL and bbolt: 80 retrieval checks in total.
+
+Each backend retains its temporary tape and a `report.json` with anchor contents, search coverage, expected and returned source IDs, timings, and failures. The command prints progress, phase totals, and the artifact directory. Any storage, anchor, or retrieval failure causes a nonzero exit status. These remain manual commands; there are no e2e `*_test.go` files.
+
+To add another provider or storage implementation, reuse `testsuite.ParseFixture` and `testsuite.Run` with a `testsuite.Config`. Supply an `Open` function that initializes and reopens the same tape directory. Optionally supply `Search`, `MinAnchors`, and `ValidateAnchors` for the capabilities under test. `Progress` receives log messages, and the returned `Report` can be saved by the caller. Storage-only configurations omit `Search` and do not claim query coverage.

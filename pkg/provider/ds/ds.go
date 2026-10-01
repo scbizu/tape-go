@@ -44,7 +44,7 @@ func NewModel(apiKey, modelName string, opts ...deepseek.Option) (*Model, error)
 	if err != nil {
 		return nil, fmt.Errorf("ds: create client: %w", err)
 	}
-	return &Model{client: client, name: modelName}, nil
+	return &Model{client: &modelCardClient{Client: client}, name: modelName}, nil
 }
 
 func (m *Model) Name() string { return m.name }
@@ -67,6 +67,10 @@ func (m *Model) ReRank(ctx context.Context, query string, candidates []string) (
 	if !m.IsEnable() {
 		return nil, errors.New("ds: model is not enabled")
 	}
+	outputLimit, err := m.outputLimit(ctx)
+	if err != nil {
+		return nil, err
+	}
 	body, err := json.Marshal(struct {
 		Query      string   `json:"query"`
 		Candidates []string `json:"candidates"`
@@ -87,7 +91,7 @@ func (m *Model) ReRank(ctx context.Context, query string, candidates []string) (
 		},
 		ResponseFormat: &deepseek.ResponseFormat{Type: "json_object"},
 		Temperature:    0,
-		MaxTokens:      1024,
+		MaxTokens:      outputLimit,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ds: rerank: %w", err)
@@ -101,6 +105,10 @@ func (m *Model) ReRank(ctx context.Context, query string, candidates []string) (
 func (m *Model) Summarize(ctx context.Context, projection view.Projection) (llm.Summary, error) {
 	if !m.IsEnable() {
 		return llm.Summary{}, errors.New("ds: model is not enabled")
+	}
+	outputLimit, err := m.outputLimit(ctx)
+	if err != nil {
+		return llm.Summary{}, err
 	}
 	state, err := json.Marshal(projection)
 	if err != nil {
@@ -120,7 +128,7 @@ func (m *Model) Summarize(ctx context.Context, projection view.Projection) (llm.
 		},
 		ResponseFormat: &deepseek.ResponseFormat{Type: "json_object"},
 		Temperature:    0,
-		MaxTokens:      4096,
+		MaxTokens:      outputLimit,
 	})
 	if err != nil {
 		return llm.Summary{}, fmt.Errorf("ds: summarize: %w", err)

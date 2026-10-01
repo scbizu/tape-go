@@ -12,6 +12,7 @@ import (
 	"github.com/scbizu/tape-go/pkg/llm"
 	"github.com/scbizu/tape-go/pkg/provider/ds"
 	jevprovider "github.com/scbizu/tape-go/pkg/provider/jev"
+	"github.com/scbizu/tape-go/pkg/tape/testsuite"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
@@ -31,26 +32,9 @@ func runJevE2E(ctx context.Context, deepSeekKey, jevKey string) error {
 	if err != nil {
 		return err
 	}
-	fixture, err := loadJevGolden()
-	if err != nil {
-		return err
-	}
-	fmt.Printf("JEV golden: %s (%d source entries, at least %d anchors, %d queries per phase)\n", fixture.Title, fixture.SourceEntries, fixture.MinAnchors, len(fixture.Queries))
-	var failures error
-	for _, backend := range e2eBackends() {
-		fmt.Printf("JEV backend: %s\n", backend.name)
-		dir, err := os.MkdirTemp("", "tape-go-jev-e2e-")
-		if err != nil {
-			return err
-		}
-		err = runJevScenario(ctx, backend, dir, summarizer, client)
-		if err != nil {
-			failures = errors.Join(failures, fmt.Errorf("%s backend: %w", backend.name, err))
-			continue
-		}
-		fmt.Println("JEV golden tape, retrieval, and restart: OK")
-	}
-	return failures
+	return runGoldenBackends(ctx, func(backend storageBackend, fixture testsuite.Fixture) testsuite.Config {
+		return jevGoldenConfig(backend, fixture, summarizer, client)
+	})
 }
 
 // projectionSummarizer keeps the e2e scenario runnable with only a JEV key.

@@ -45,7 +45,22 @@ type storageBackend struct {
 
 func main() {
 	ctx := owner.WithOwnerId(context.Background(), ownerID)
-	if len(os.Args) > 1 && os.Args[1] == "jev" {
+	if len(os.Args) > 1 && os.Args[1] == "golden" {
+		mode := "storage"
+		if len(os.Args) > 2 {
+			mode = os.Args[2]
+		}
+		if mode == "storage" {
+			if err := runStorageGolden(ctx); err != nil {
+				log.Fatal(err)
+			}
+			return
+		}
+		if mode != "jev" {
+			log.Fatalf("unknown golden scenario %q; use storage or jev", mode)
+		}
+	}
+	if len(os.Args) > 1 && (os.Args[1] == "jev" || os.Args[1] == "golden") {
 		jevKey, err := jevAPIKey(configPath())
 		if err != nil {
 			log.Fatal(err)
