@@ -2,12 +2,15 @@ package ds
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 
 	deepseek "github.com/cohesion-org/deepseek-go"
+	"github.com/scbizu/tape-go/pkg/llm"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
@@ -60,13 +63,24 @@ func TestStructuredRequestsUseDiscoveredModelLimits(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = m.Summarize(context.Background(), view.Projection{Entries: []view.ProjectedEntry{{Summary: "fact"}}})
+			var model llm.Model = m
+			limit, err := model.MaxTokenLimit(context.Background())
 			if tc.wantError {
 				if err == nil || posts != 0 {
-					t.Fatal("discovery failure must not send a completion")
+					t.Fatal("expected model limit discovery failure without a completion")
 				}
 				return
 			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantLimit == "" && limit != 0 {
+				t.Fatalf("unknown output limit = %d, want 0", limit)
+			}
+			if tc.wantLimit != "" && fmt.Sprintf(`"max_tokens":%d`, limit) != tc.wantLimit {
+				t.Fatalf("discovered output limit = %d, want %s", limit, tc.wantLimit)
+			}
+			_, err = m.Summarize(context.Background(), view.Projection{Entries: []view.ProjectedEntry{{Summary: "fact"}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -77,6 +91,23 @@ func TestStructuredRequestsUseDiscoveredModelLimits(t *testing.T) {
 				t.Fatalf("metadata cache: %d GETs, %d POSTs", gets, posts)
 			}
 		})
+	}
+}
+
+func TestMaxTokenLimitUnavailableModelAndCanceledContext(t *testing.T) {
+	for _, m := range []*Model{nil, {}, {client: &fakeClient{}}} {
+		if _, err := m.MaxTokenLimit(context.Background()); err == nil {
+			t.Fatal("disabled model must return an error")
+		}
+	}
+	m := &Model{client: &fakeClient{}, name: "custom-model"}
+	if limit, err := m.MaxTokenLimit(context.Background()); err != nil || limit != 0 {
+		t.Fatalf("client without metadata: limit %d, error %v", limit, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := m.MaxTokenLimit(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled context: %v", err)
 	}
 }
 

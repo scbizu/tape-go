@@ -53,6 +53,23 @@ func (m *Model) IsEnable() bool {
 	return m != nil && m.client != nil && m.name != ""
 }
 
+// MaxTokenLimit returns the cached model-card output limit, discovering it on
+// first use. Zero means the provider did not advertise an output limit.
+func (m *Model) MaxTokenLimit(ctx context.Context) (int, error) {
+	if !m.IsEnable() {
+		return 0, errors.New("ds: model is not enabled")
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if cards, ok := m.client.(interface {
+		OutputLimit(context.Context, string) (int, error)
+	}); ok {
+		return cards.OutputLimit(ctx, m.name)
+	}
+	return 0, nil
+}
+
 func (m *Model) Embedding(context.Context, string) ([]float32, error) {
 	return nil, ErrEmbeddingUnsupported
 }
@@ -67,7 +84,7 @@ func (m *Model) ReRank(ctx context.Context, query string, candidates []string) (
 	if !m.IsEnable() {
 		return nil, errors.New("ds: model is not enabled")
 	}
-	outputLimit, err := m.outputLimit(ctx)
+	outputLimit, err := m.MaxTokenLimit(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +123,7 @@ func (m *Model) Summarize(ctx context.Context, projection view.Projection) (llm.
 	if !m.IsEnable() {
 		return llm.Summary{}, errors.New("ds: model is not enabled")
 	}
-	outputLimit, err := m.outputLimit(ctx)
+	outputLimit, err := m.MaxTokenLimit(ctx)
 	if err != nil {
 		return llm.Summary{}, err
 	}

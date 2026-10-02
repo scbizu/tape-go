@@ -140,6 +140,10 @@ func (m *fakeModel) IsEnable() bool {
 	return m.enabled
 }
 
+func (m *fakeModel) MaxTokenLimit(context.Context) (int, error) {
+	return 0, nil
+}
+
 func (m *fakeModel) Embedding(_ context.Context, text string) ([]float32, error) {
 	if v, ok := m.vectors[text]; ok {
 		return v, nil

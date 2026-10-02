@@ -71,12 +71,3 @@ func (c *modelCardClient) OutputLimit(ctx context.Context, name string) (int, er
 	c.limits = limits
 	return limits[name], nil
 }
-
-func (m *Model) outputLimit(ctx context.Context) (int, error) {
-	if cards, ok := m.client.(interface {
-		OutputLimit(context.Context, string) (int, error)
-	}); ok {
-		return cards.OutputLimit(ctx, m.name)
-	}
-	return 0, nil
-}
