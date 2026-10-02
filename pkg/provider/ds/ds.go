@@ -87,7 +87,6 @@ func (m *Model) ReRank(ctx context.Context, query string, candidates []string) (
 		},
 		ResponseFormat: &deepseek.ResponseFormat{Type: "json_object"},
 		Temperature:    0,
-		MaxTokens:      1024,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ds: rerank: %w", err)
@@ -120,13 +119,15 @@ func (m *Model) Summarize(ctx context.Context, projection view.Projection) (llm.
 		},
 		ResponseFormat: &deepseek.ResponseFormat{Type: "json_object"},
 		Temperature:    0,
-		MaxTokens:      1024,
 	})
 	if err != nil {
 		return llm.Summary{}, fmt.Errorf("ds: summarize: %w", err)
 	}
 	if len(resp.Choices) == 0 {
 		return llm.Summary{}, errors.New("ds: summarize empty response")
+	}
+	if resp.Choices[0].FinishReason == "length" {
+		return llm.Summary{}, errors.New("ds: summarize truncated at the output token limit")
 	}
 	summary := strings.TrimSpace(resp.Choices[0].Message.Content)
 	if summary == "" {

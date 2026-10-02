@@ -45,6 +45,35 @@ type storageBackend struct {
 
 func main() {
 	ctx := owner.WithOwnerId(context.Background(), ownerID)
+	if len(os.Args) > 1 && os.Args[1] == "golden" {
+		mode := "storage"
+		if len(os.Args) > 2 {
+			mode = os.Args[2]
+		}
+		if mode == "storage" {
+			if err := runStorageGolden(ctx); err != nil {
+				log.Fatal(err)
+			}
+			return
+		}
+		if mode != "jev" {
+			log.Fatalf("unknown golden scenario %q; use storage or jev", mode)
+		}
+	}
+	if len(os.Args) > 1 && (os.Args[1] == "jev" || os.Args[1] == "golden") {
+		jevKey, err := jevAPIKey(configPath())
+		if err != nil {
+			log.Fatal(err)
+		}
+		deepSeekKey, err := optionalDeepSeekAPIKey(configPath())
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := runJevE2E(ctx, deepSeekKey, jevKey); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	apiKey, err := deepSeekAPIKey(configPath())
 	if err != nil {
 		log.Fatal(err)
@@ -349,6 +378,17 @@ func (m chatUI) send(text string) tea.Cmd {
 }
 
 func deepSeekAPIKey(path string) (string, error) {
+	key, err := optionalDeepSeekAPIKey(path)
+	if err != nil {
+		return "", err
+	}
+	if key == "" {
+		return "", fmt.Errorf("DEEPSEEK_API_KEY or provider.deepseek.api_key in %s is required", path)
+	}
+	return key, nil
+}
+
+func optionalDeepSeekAPIKey(path string) (string, error) {
 	if apiKey := os.Getenv("DEEPSEEK_API_KEY"); apiKey != "" {
 		return apiKey, nil
 	}
@@ -357,6 +397,9 @@ func deepSeekAPIKey(path string) (string, error) {
 		return "", fmt.Errorf("read DeepSeek config %s: %w", path, err)
 	}
 	var config struct {
+		DeepSeek struct {
+			APIKey string `toml:"api_key"`
+		} `toml:"deepseek"`
 		Provider struct {
 			DeepSeek struct {
 				APIKey string `toml:"api_key"`
@@ -366,10 +409,10 @@ func deepSeekAPIKey(path string) (string, error) {
 	if err := toml.Unmarshal(data, &config); err != nil {
 		return "", fmt.Errorf("parse DeepSeek config %s: %w", path, err)
 	}
-	if config.Provider.DeepSeek.APIKey == "" {
-		return "", fmt.Errorf("DEEPSEEK_API_KEY or provider.deepseek.api_key in %s is required", path)
+	if config.Provider.DeepSeek.APIKey != "" {
+		return config.Provider.DeepSeek.APIKey, nil
 	}
-	return config.Provider.DeepSeek.APIKey, nil
+	return config.DeepSeek.APIKey, nil
 }
 
 func configPath() string {

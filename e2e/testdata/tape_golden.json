@@ -1,0 +1,708 @@
+{
+  "title": "The Lantern Road",
+  "source_entries": 100,
+  "entries": [
+    {
+      "id": "entry-001",
+      "window": "scene-01",
+      "kind": "user",
+      "text": "Morning fog hid Bellhaven's harbor, and Mira held the unlit lantern against her coat."
+    },
+    {
+      "id": "entry-002",
+      "window": "scene-01",
+      "kind": "assistant",
+      "text": "Ren studied the ferryman's outstretched hand. \"We cannot carry our mission across the water on goodwill alone.\""
+    },
+    {
+      "id": "entry-003",
+      "window": "scene-01",
+      "kind": "user",
+      "text": "Mira searched her purse while the ferry rope creaked against its post."
+    },
+    {
+      "id": "entry-004",
+      "window": "scene-01",
+      "kind": "assistant",
+      "text": "Ren counted their coins once more, then asked the ferryman for his final price."
+    },
+    {
+      "id": "entry-005",
+      "window": "scene-01",
+      "kind": "user",
+      "text": "Mira and courier Ren left Bellhaven to carry the moon lantern to the sleeping city of Vesper. Their passage aboard the river ferry cost seven silver crowns."
+    },
+    {
+      "id": "entry-006",
+      "window": "scene-02",
+      "kind": "user",
+      "text": "The ferryman blocked the gangplank with a weathered pole."
+    },
+    {
+      "id": "entry-007",
+      "window": "scene-02",
+      "kind": "assistant",
+      "text": "\"A guild badge is no answer,\" he told Ren. \"Only a traveler who knows the words may board.\""
+    },
+    {
+      "id": "entry-008",
+      "window": "scene-02",
+      "kind": "user",
+      "text": "Mira feared the lantern's faint glow would attract the harbor watch."
+    },
+    {
+      "id": "entry-009",
+      "window": "scene-02",
+      "kind": "assistant",
+      "text": "Ren leaned close to the old man and spoke the phrase he had learned in the market."
+    },
+    {
+      "id": "entry-010",
+      "window": "scene-02",
+      "kind": "user",
+      "text": "The ferryman refused the usual guild greeting. Ren obtained passage only after saying the password, \"the heron sleeps beneath the bridge\"."
+    },
+    {
+      "id": "entry-011",
+      "window": "scene-03",
+      "kind": "user",
+      "text": "Reedmarket smelled of bitter herbs and wet canvas."
+    },
+    {
+      "id": "entry-012",
+      "window": "scene-03",
+      "kind": "assistant",
+      "text": "\"We should prepare for the road,\" Mira said, studying the apothecary's blue bottles."
+    },
+    {
+      "id": "entry-013",
+      "window": "scene-03",
+      "kind": "user",
+      "text": "Ren opened his satchel and moved the letters away from the fragile glass."
+    },
+    {
+      "id": "entry-014",
+      "window": "scene-03",
+      "kind": "assistant",
+      "text": "The apothecary wrapped their purchase in cloth before handing it across the counter."
+    },
+    {
+      "id": "entry-015",
+      "window": "scene-03",
+      "kind": "user",
+      "text": "At Reedmarket, Mira purchased twelve blue healing draughts. She entrusted all twelve to Ren, who carried them in his canvas satchel."
+    },
+    {
+      "id": "entry-016",
+      "window": "scene-04",
+      "kind": "user",
+      "text": "At Thornwood, lanterns flickered between the trees like watchful eyes."
+    },
+    {
+      "id": "entry-017",
+      "window": "scene-04",
+      "kind": "assistant",
+      "text": "\"A guide would keep us from wandering all night,\" Ren said."
+    },
+    {
+      "id": "entry-018",
+      "window": "scene-04",
+      "kind": "user",
+      "text": "Mira unfolded a map whose ink had run in yesterday's rain."
+    },
+    {
+      "id": "entry-019",
+      "window": "scene-04",
+      "kind": "assistant",
+      "text": "A note from Sora arrived, specifying where and when the party should gather."
+    },
+    {
+      "id": "entry-020",
+      "window": "scene-04",
+      "kind": "user",
+      "text": "The forest guide Sora agreed to meet them at the west gate of Thornwood at the third evening bell. Mira marked the gate on her map."
+    },
+    {
+      "id": "entry-021",
+      "window": "scene-05",
+      "kind": "user",
+      "text": "Sora stood before the fork in the forest road, her cloak caught on a thorn."
+    },
+    {
+      "id": "entry-022",
+      "window": "scene-05",
+      "kind": "assistant",
+      "text": "\"The shorter way is not always the kinder one,\" she said."
+    },
+    {
+      "id": "entry-023",
+      "window": "scene-05",
+      "kind": "user",
+      "text": "Ren could hear whispers rising from beneath the tangled roots."
+    },
+    {
+      "id": "entry-024",
+      "window": "scene-05",
+      "kind": "assistant",
+      "text": "Mira followed Sora's finger across the map and tied a strip of cloth to her wrist."
+    },
+    {
+      "id": "entry-025",
+      "window": "scene-05",
+      "kind": "user",
+      "text": "Sora rejected the northern path because its roots concealed hungry spirits. The party chose the eastern path marked by white ribbon."
+    },
+    {
+      "id": "entry-026",
+      "window": "scene-06",
+      "kind": "user",
+      "text": "At a ruined shrine, footprints ended abruptly in the moss."
+    },
+    {
+      "id": "entry-027",
+      "window": "scene-06",
+      "kind": "assistant",
+      "text": "\"Someone crossed here without wishing to be seen,\" Sora murmured."
+    },
+    {
+      "id": "entry-028",
+      "window": "scene-06",
+      "kind": "user",
+      "text": "Mira searched the empty doorway, but the stones offered no trace."
+    },
+    {
+      "id": "entry-029",
+      "window": "scene-06",
+      "kind": "assistant",
+      "text": "Sora took a small bell from a velvet pouch and explained its proper use."
+    },
+    {
+      "id": "entry-030",
+      "window": "scene-06",
+      "kind": "user",
+      "text": "At the ruined shrine, Sora gave Mira a silver bell. Ringing it twice would reveal invisible footprints, while ringing it once would do nothing."
+    },
+    {
+      "id": "entry-031",
+      "window": "scene-07",
+      "kind": "user",
+      "text": "The shrine keeper emerged as Mira prepared to leave."
+    },
+    {
+      "id": "entry-032",
+      "window": "scene-07",
+      "kind": "assistant",
+      "text": "\"Borrowed gifts remember their owners,\" the keeper warned."
+    },
+    {
+      "id": "entry-033",
+      "window": "scene-07",
+      "kind": "user",
+      "text": "Ren glanced at the clouds gathering beyond the shattered roof."
+    },
+    {
+      "id": "entry-034",
+      "window": "scene-07",
+      "kind": "assistant",
+      "text": "Mira knelt beside the shrine and made a promise before a witness."
+    },
+    {
+      "id": "entry-035",
+      "window": "scene-07",
+      "kind": "user",
+      "text": "Mira promised the shrine keeper that she would return the silver bell before the first snow. Sora witnessed the promise."
+    },
+    {
+      "id": "entry-036",
+      "window": "scene-08",
+      "kind": "user",
+      "text": "The Lantern Inn glowed warmly beyond the darkening road."
+    },
+    {
+      "id": "entry-037",
+      "window": "scene-08",
+      "kind": "assistant",
+      "text": "The keeper slid open a narrow hatch. \"The words of the river have no power in this house.\""
+    },
+    {
+      "id": "entry-038",
+      "window": "scene-08",
+      "kind": "user",
+      "text": "Ren swallowed the greeting he had used at the ferry."
+    },
+    {
+      "id": "entry-039",
+      "window": "scene-08",
+      "kind": "assistant",
+      "text": "Mira repeated the new phrase from the inn's invitation, and the latch clicked."
+    },
+    {
+      "id": "entry-040",
+      "window": "scene-08",
+      "kind": "user",
+      "text": "At the Lantern Inn, the keeper demanded a different password: \"the fox dreams above the gate\". The river password was not accepted there."
+    },
+    {
+      "id": "entry-041",
+      "window": "scene-09",
+      "kind": "user",
+      "text": "Ren sat by the inn's hearth with a sealed letter in his hand."
+    },
+    {
+      "id": "entry-042",
+      "window": "scene-09",
+      "kind": "assistant",
+      "text": "\"If we miss the captain, our journey ends at the mountains,\" he said."
+    },
+    {
+      "id": "entry-043",
+      "window": "scene-09",
+      "kind": "user",
+      "text": "Mira watched the keeper sort messages into a wooden rack."
+    },
+    {
+      "id": "entry-044",
+      "window": "scene-09",
+      "kind": "assistant",
+      "text": "The keeper accepted Ren's letter and gave a precise delivery promise."
+    },
+    {
+      "id": "entry-045",
+      "window": "scene-09",
+      "kind": "user",
+      "text": "Ren left a sealed letter for Captain Ivo with the Lantern Inn keeper. The keeper promised to deliver it at sunrise, not that evening."
+    },
+    {
+      "id": "entry-046",
+      "window": "scene-10",
+      "kind": "user",
+      "text": "Frostpass rose beyond the town walls, pale and forbidding."
+    },
+    {
+      "id": "entry-047",
+      "window": "scene-10",
+      "kind": "assistant",
+      "text": "\"We need someone who knows the snow,\" Mira said."
+    },
+    {
+      "id": "entry-048",
+      "window": "scene-10",
+      "kind": "user",
+      "text": "Ren scanned the gates while the morning bells began to sound."
+    },
+    {
+      "id": "entry-049",
+      "window": "scene-10",
+      "kind": "assistant",
+      "text": "A uniformed traveler carrying an ice axe approached and introduced himself."
+    },
+    {
+      "id": "entry-050",
+      "window": "scene-10",
+      "kind": "user",
+      "text": "Captain Ivo met the travelers at the south gate of Frostpass at the fifth morning bell. Unlike Sora, he would guide them over the mountains."
+    },
+    {
+      "id": "entry-051",
+      "window": "scene-11",
+      "kind": "user",
+      "text": "Captain Ivo studied the mountain slopes in silence."
+    },
+    {
+      "id": "entry-052",
+      "window": "scene-11",
+      "kind": "assistant",
+      "text": "\"Yesterday's trail may not be today's trail,\" he told the party."
+    },
+    {
+      "id": "entry-053",
+      "window": "scene-11",
+      "kind": "user",
+      "text": "Sora had already turned back toward the forest, leaving Mira to read Ivo's map."
+    },
+    {
+      "id": "entry-054",
+      "window": "scene-11",
+      "kind": "assistant",
+      "text": "Ivo pointed to a ribbon fluttering against the snow and chose their crossing."
+    },
+    {
+      "id": "entry-055",
+      "window": "scene-11",
+      "kind": "user",
+      "text": "Ivo rejected the eastern ridge because an avalanche had buried it. The party crossed Frostpass using the western ridge marked by red ribbon."
+    },
+    {
+      "id": "entry-056",
+      "window": "scene-12",
+      "kind": "user",
+      "text": "On the glacier, distant howls rose above the cracking ice."
+    },
+    {
+      "id": "entry-057",
+      "window": "scene-12",
+      "kind": "assistant",
+      "text": "Ren reached for Mira's shrine bell, but Ivo stopped his hand."
+    },
+    {
+      "id": "entry-058",
+      "window": "scene-12",
+      "kind": "user",
+      "text": "\"Different creatures listen to different music,\" the captain said."
+    },
+    {
+      "id": "entry-059",
+      "window": "scene-12",
+      "kind": "assistant",
+      "text": "Ivo placed another bell in Ren's palm and described how to ring it."
+    },
+    {
+      "id": "entry-060",
+      "window": "scene-12",
+      "kind": "user",
+      "text": "Ivo lent Ren a brass bell for the glacier crossing. Ringing it three times would calm the ice wolves; the shrine's silver bell could not do this."
+    },
+    {
+      "id": "entry-061",
+      "window": "scene-13",
+      "kind": "user",
+      "text": "The wolves struck as Ivo stepped onto a hidden crevasse."
+    },
+    {
+      "id": "entry-062",
+      "window": "scene-13",
+      "kind": "assistant",
+      "text": "Mira hauled the captain back with a rope while Ren tore open his satchel."
+    },
+    {
+      "id": "entry-063",
+      "window": "scene-13",
+      "kind": "user",
+      "text": "Blue glass flashed in the snow, and the wounded captain shivered."
+    },
+    {
+      "id": "entry-064",
+      "window": "scene-13",
+      "kind": "assistant",
+      "text": "When the attack ended, Ren counted what remained of their medicine."
+    },
+    {
+      "id": "entry-065",
+      "window": "scene-13",
+      "kind": "user",
+      "text": "When ice wolves attacked, Ren used four of the twelve Reedmarket healing draughts to save Ivo. Eight blue draughts remained afterward."
+    },
+    {
+      "id": "entry-066",
+      "window": "scene-14",
+      "kind": "user",
+      "text": "Mirror Lake lay still beneath a sky without clouds."
+    },
+    {
+      "id": "entry-067",
+      "window": "scene-14",
+      "kind": "assistant",
+      "text": "The boat keeper refused silver, pointing instead to a tray of copper tokens."
+    },
+    {
+      "id": "entry-068",
+      "window": "scene-14",
+      "kind": "user",
+      "text": "\"Every crossing has its own bargain,\" Mira said."
+    },
+    {
+      "id": "entry-069",
+      "window": "scene-14",
+      "kind": "assistant",
+      "text": "Ren kept the river receipt folded away as they negotiated this separate fare."
+    },
+    {
+      "id": "entry-070",
+      "window": "scene-14",
+      "kind": "user",
+      "text": "At Mirror Lake, the boat keeper charged Mira and Ren eleven copper tokens to cross. This fee was separate from the Bellhaven river ferry fare."
+    },
+    {
+      "id": "entry-071",
+      "window": "scene-15",
+      "kind": "user",
+      "text": "The drowned chapel's roof broke the lake surface like a black tooth."
+    },
+    {
+      "id": "entry-072",
+      "window": "scene-15",
+      "kind": "assistant",
+      "text": "Mira descended through the shallow water while Ren held the guide rope."
+    },
+    {
+      "id": "entry-073",
+      "window": "scene-15",
+      "kind": "user",
+      "text": "An instrument glimmered beneath the altar, its needle turning toward no familiar direction."
+    },
+    {
+      "id": "entry-074",
+      "window": "scene-15",
+      "kind": "assistant",
+      "text": "Mira brought it into the boat, and the travelers discovered its unsettling behavior."
+    },
+    {
+      "id": "entry-075",
+      "window": "scene-15",
+      "kind": "user",
+      "text": "In the drowned chapel, Mira recovered a glass compass. It pointed toward broken promises rather than north, so Ren wrapped it in black cloth."
+    },
+    {
+      "id": "entry-076",
+      "window": "scene-16",
+      "kind": "user",
+      "text": "Vesper's gate stood beneath a curtain of sleeping ivy."
+    },
+    {
+      "id": "entry-077",
+      "window": "scene-16",
+      "kind": "assistant",
+      "text": "The guard shook his head at both the ferry phrase and the inn phrase."
+    },
+    {
+      "id": "entry-078",
+      "window": "scene-16",
+      "kind": "user",
+      "text": "\"A city has its own memory,\" Mira whispered to Ren."
+    },
+    {
+      "id": "entry-079",
+      "window": "scene-16",
+      "kind": "assistant",
+      "text": "She read the inscription on the lantern's base and addressed the guard again."
+    },
+    {
+      "id": "entry-080",
+      "window": "scene-16",
+      "kind": "user",
+      "text": "The Vesper gate guard admitted the party after Mira spoke the password, \"the moon remembers every name\". Neither earlier password opened this gate."
+    },
+    {
+      "id": "entry-081",
+      "window": "scene-17",
+      "kind": "user",
+      "text": "The archivist met them in a hall lined with empty portraits."
+    },
+    {
+      "id": "entry-082",
+      "window": "scene-17",
+      "kind": "assistant",
+      "text": "\"Do not light it as you would an ordinary lamp,\" the archivist warned."
+    },
+    {
+      "id": "entry-083",
+      "window": "scene-17",
+      "kind": "user",
+      "text": "Ren set down a cup from the courtyard well, but Mira hesitated."
+    },
+    {
+      "id": "entry-084",
+      "window": "scene-17",
+      "kind": "assistant",
+      "text": "The archivist described the precise preparation the lantern required."
+    },
+    {
+      "id": "entry-085",
+      "window": "scene-17",
+      "kind": "user",
+      "text": "Vesper's archivist explained that the moon lantern must be lit with three drops of rainwater collected before dawn. Ordinary well water would extinguish it."
+    },
+    {
+      "id": "entry-086",
+      "window": "scene-18",
+      "kind": "user",
+      "text": "Deep in the archive, drawers whispered whenever Mira passed."
+    },
+    {
+      "id": "entry-087",
+      "window": "scene-18",
+      "kind": "assistant",
+      "text": "\"The missing names are here, but not where a visitor would first look,\" the archivist said."
+    },
+    {
+      "id": "entry-088",
+      "window": "scene-18",
+      "kind": "user",
+      "text": "Ren watched the glass compass tremble beneath its black wrapping."
+    },
+    {
+      "id": "entry-089",
+      "window": "scene-18",
+      "kind": "assistant",
+      "text": "The archivist led Mira to the permitted drawer and explained how to open it."
+    },
+    {
+      "id": "entry-090",
+      "window": "scene-18",
+      "kind": "user",
+      "text": "The archivist stored the city's missing names in the seventh drawer of the east archive. Mira was permitted to open that drawer with the glass compass."
+    },
+    {
+      "id": "entry-091",
+      "window": "scene-19",
+      "kind": "user",
+      "text": "With the final night approaching, Ren prepared to leave Vesper."
+    },
+    {
+      "id": "entry-092",
+      "window": "scene-19",
+      "kind": "assistant",
+      "text": "\"If we are separated, I will still wait,\" he told Mira."
+    },
+    {
+      "id": "entry-093",
+      "window": "scene-19",
+      "kind": "user",
+      "text": "She tried to smile, though the unlit lantern felt heavier than before."
+    },
+    {
+      "id": "entry-094",
+      "window": "scene-19",
+      "kind": "assistant",
+      "text": "Ren named a meeting place and a day she could remember without a map."
+    },
+    {
+      "id": "entry-095",
+      "window": "scene-19",
+      "kind": "user",
+      "text": "Ren promised Mira that he would return to Bellhaven on the ninth day of the Harvest Moon. He would wait beneath the old clock tower if she was delayed."
+    },
+    {
+      "id": "entry-096",
+      "window": "scene-20",
+      "kind": "user",
+      "text": "Before sunrise, Vesper's empty streets held their breath."
+    },
+    {
+      "id": "entry-097",
+      "window": "scene-20",
+      "kind": "assistant",
+      "text": "Mira climbed the stairs while the archivist watched from below."
+    },
+    {
+      "id": "entry-098",
+      "window": "scene-20",
+      "kind": "user",
+      "text": "The first light brushed the roofs, and Ren's footsteps faded beyond the gate."
+    },
+    {
+      "id": "entry-099",
+      "window": "scene-20",
+      "kind": "assistant",
+      "text": "Mira completed the journey's final task and chose where the recovered relic should remain."
+    },
+    {
+      "id": "entry-100",
+      "window": "scene-20",
+      "kind": "user",
+      "text": "Mira lit the lantern on Vesper's north tower as the sun rose. The sleeping citizens awakened, and she entrusted the glass compass to the archivist before departing."
+    }
+  ],
+  "queries": [
+    {
+      "id": "departure",
+      "query": "How many silver crowns did Mira and Ren pay for the river ferry when leaving Bellhaven?",
+      "expected_entry_id": "entry-005"
+    },
+    {
+      "id": "river-pass",
+      "query": "What password did Ren use to obtain passage from the ferryman?",
+      "expected_entry_id": "entry-010"
+    },
+    {
+      "id": "supply-cache",
+      "query": "How many blue healing draughts did Mira purchase at Reedmarket, and who carried them?",
+      "expected_entry_id": "entry-015"
+    },
+    {
+      "id": "forest-guide",
+      "query": "At which Thornwood gate and bell did Sora agree to meet the expedition?",
+      "expected_entry_id": "entry-020"
+    },
+    {
+      "id": "forest-route",
+      "query": "Which marked path did Sora choose through Thornwood?",
+      "expected_entry_id": "entry-025"
+    },
+    {
+      "id": "silver-bell",
+      "query": "How many times must Mira ring the silver bell to reveal invisible footprints?",
+      "expected_entry_id": "entry-030"
+    },
+    {
+      "id": "shrine-oath",
+      "query": "By what deadline did Mira promise to return the shrine keeper's silver bell?",
+      "expected_entry_id": "entry-035"
+    },
+    {
+      "id": "inn-password",
+      "query": "What password was required at the Lantern Inn?",
+      "expected_entry_id": "entry-040"
+    },
+    {
+      "id": "inn-message",
+      "query": "For whom did Ren leave the sealed letter at the Lantern Inn, and when would it be delivered?",
+      "expected_entry_id": "entry-045"
+    },
+    {
+      "id": "mountain-guide",
+      "query": "At which Frostpass gate and bell did Captain Ivo meet the travelers?",
+      "expected_entry_id": "entry-050"
+    },
+    {
+      "id": "mountain-route",
+      "query": "Which marked ridge did Ivo choose across Frostpass?",
+      "expected_entry_id": "entry-055"
+    },
+    {
+      "id": "brass-bell",
+      "query": "Which bell would calm the ice wolves, and how many rings did it require?",
+      "expected_entry_id": "entry-060"
+    },
+    {
+      "id": "wolf-cost",
+      "query": "How many Reedmarket healing draughts remained after the ice wolf attack?",
+      "expected_entry_id": "entry-065"
+    },
+    {
+      "id": "lake-fare",
+      "query": "How many copper tokens did the Mirror Lake crossing cost?",
+      "expected_entry_id": "entry-070"
+    },
+    {
+      "id": "lake-relic",
+      "query": "What did the glass compass recovered from the drowned chapel point toward?",
+      "expected_entry_id": "entry-075"
+    },
+    {
+      "id": "vesper-gate",
+      "query": "What password opened the gate of Vesper?",
+      "expected_entry_id": "entry-080"
+    },
+    {
+      "id": "lantern-rule",
+      "query": "What liquid and quantity were required to light the moon lantern?",
+      "expected_entry_id": "entry-085"
+    },
+    {
+      "id": "vault-location",
+      "query": "Where in the archive were Vesper's missing names stored?",
+      "expected_entry_id": "entry-090"
+    },
+    {
+      "id": "final-promise",
+      "query": "On what day and at what Bellhaven landmark did Ren promise to wait for Mira?",
+      "expected_entry_id": "entry-095"
+    },
+    {
+      "id": "dawn-return",
+      "query": "Where did Mira light the moon lantern, and who received the glass compass afterward?",
+      "expected_entry_id": "entry-100"
+    }
+  ]
+}
