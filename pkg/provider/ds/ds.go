@@ -8,13 +8,10 @@ import (
 	"fmt"
 	"io"
 	"iter"
-	"net/http"
 	"sort"
 	"strings"
-	"sync"
 
 	deepseek "github.com/cohesion-org/deepseek-go"
-	"github.com/cohesion-org/deepseek-go/utils"
 	"google.golang.org/genai"
 
 	"github.com/scbizu/tape-go/pkg/llm"
@@ -47,90 +44,13 @@ func NewModel(apiKey, modelName string, opts ...deepseek.Option) (*Model, error)
 	if err != nil {
 		return nil, fmt.Errorf("ds: create client: %w", err)
 	}
-	return &Model{client: &modelCardClient{Client: client}, name: modelName}, nil
+	return &Model{client: client, name: modelName}, nil
 }
 
 func (m *Model) Name() string { return m.name }
 
 func (m *Model) IsEnable() bool {
 	return m != nil && m.client != nil && m.name != ""
-}
-
-// MaxTokenLimit returns the cached model-card output limit, discovering it on
-// first use. Zero means the provider did not advertise an output limit.
-func (m *Model) MaxTokenLimit(ctx context.Context) (int, error) {
-	if !m.IsEnable() {
-		return 0, errors.New("ds: model is not enabled")
-	}
-	if err := ctx.Err(); err != nil {
-		return 0, err
-	}
-	if cards, ok := m.client.(interface {
-		OutputLimit(context.Context, string) (int, error)
-	}); ok {
-		return cards.OutputLimit(ctx, m.name)
-	}
-	return 0, nil
-}
-
-// modelCardClient preserves /models metadata that the SDK's Model type drops.
-// Successful discovery is cached for this client; transient failures are retried
-// on the next call. Endpoints without output metadata use their server defaults.
-type modelCardClient struct {
-	*deepseek.Client
-	mu     sync.Mutex
-	limits map[string]int
-}
-
-func (c *modelCardClient) OutputLimit(ctx context.Context, name string) (int, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := ctx.Err(); err != nil {
-		return 0, err
-	}
-	if c.limits != nil {
-		return c.limits[name], nil
-	}
-	if c.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
-		defer cancel()
-	}
-	req, err := utils.NewRequestBuilder(c.AuthToken).
-		SetBaseURL(strings.TrimRight(c.BaseURL, "/") + "/").SetPath("models").BuildGet(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("ds: model card request: %w", err)
-	}
-	resp, err := deepseek.HandleNormalRequest(*c.Client, req)
-	if err != nil {
-		return 0, fmt.Errorf("ds: model card request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNotImplemented {
-		c.limits = make(map[string]int)
-		return 0, nil
-	}
-	if resp.StatusCode >= 400 {
-		return 0, fmt.Errorf("ds: model cards: %w", deepseek.HandleAPIError(resp))
-	}
-	var cards struct {
-		Data []struct {
-			ID              string `json:"id"`
-			MaxOutputTokens int    `json:"max_output_tokens"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&cards); err != nil {
-		return 0, fmt.Errorf("ds: decode model cards: %w", err)
-	}
-	limits := make(map[string]int, len(cards.Data))
-	for _, card := range cards.Data {
-		if card.MaxOutputTokens < 0 {
-			return 0, fmt.Errorf("ds: model %q has a negative output limit", card.ID)
-		}
-		limits[card.ID] = card.MaxOutputTokens
-	}
-	c.limits = limits
-	return limits[name], nil
 }
 
 func (m *Model) Embedding(context.Context, string) ([]float32, error) {
@@ -146,10 +66,6 @@ func (m *Model) ReRank(ctx context.Context, query string, candidates []string) (
 	}
 	if !m.IsEnable() {
 		return nil, errors.New("ds: model is not enabled")
-	}
-	outputLimit, err := m.MaxTokenLimit(ctx)
-	if err != nil {
-		return nil, err
 	}
 	body, err := json.Marshal(struct {
 		Query      string   `json:"query"`
@@ -171,7 +87,6 @@ func (m *Model) ReRank(ctx context.Context, query string, candidates []string) (
 		},
 		ResponseFormat: &deepseek.ResponseFormat{Type: "json_object"},
 		Temperature:    0,
-		MaxTokens:      outputLimit,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ds: rerank: %w", err)
@@ -185,10 +100,6 @@ func (m *Model) ReRank(ctx context.Context, query string, candidates []string) (
 func (m *Model) Summarize(ctx context.Context, projection view.Projection) (llm.Summary, error) {
 	if !m.IsEnable() {
 		return llm.Summary{}, errors.New("ds: model is not enabled")
-	}
-	outputLimit, err := m.MaxTokenLimit(ctx)
-	if err != nil {
-		return llm.Summary{}, err
 	}
 	state, err := json.Marshal(projection)
 	if err != nil {
@@ -208,7 +119,6 @@ func (m *Model) Summarize(ctx context.Context, projection view.Projection) (llm.
 		},
 		ResponseFormat: &deepseek.ResponseFormat{Type: "json_object"},
 		Temperature:    0,
-		MaxTokens:      outputLimit,
 	})
 	if err != nil {
 		return llm.Summary{}, fmt.Errorf("ds: summarize: %w", err)

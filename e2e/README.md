@@ -12,7 +12,7 @@ Run the JEV retrieval scenario with local provider credentials:
 go run ./e2e golden jev
 ```
 
-`go run ./e2e jev` remains an alias. The JEV key can be set via `JEV_API_KEY`, `jev.api_key`, or `provider.jev.api_key` in the ignored `e2e/config.toml`. With only a JEV key, the scenario uses a deterministic projection summary. For DeepSeek summaries, provide `DEEPSEEK_API_KEY`, `deepseek.api_key`, or `provider.deepseek.api_key`; `DEEPSEEK_MODEL` optionally selects the model. Summary and reranking output budgets come from the provider's `/models` output metadata, cached per client. Compatible endpoints without that metadata use their own defaults.
+`go run ./e2e jev` remains an alias. The JEV key can be set via `JEV_API_KEY`, `jev.api_key`, or `provider.jev.api_key` in the ignored `e2e/config.toml`. With only a JEV key, the scenario uses a deterministic projection summary. For DeepSeek summaries, provide `DEEPSEEK_API_KEY`, `deepseek.api_key`, or `provider.deepseek.api_key`; `DEEPSEEK_MODEL` optionally selects the model. Summary and reranking requests omit `max_tokens` and use the provider's defaults. Generation requests still honor an explicitly supplied `MaxOutputTokens`.
 
 Both scenarios use [The Lantern Road](testdata/tape_golden.json), an original fantasy expedition told in 100 source entries across 20 five-entry scenes. Recurring characters encounter different passwords, fares, bells, routes, supplies, and promises. Its 20 golden queries specify expected source entry IDs. The fixture contains source data and expectations, without a JEV-specific anchor requirement.
 
