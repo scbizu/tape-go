@@ -1,13 +1,10 @@
-package main
+package e2e
 
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	jevext "github.com/scbizu/tape-go/pkg/ext/jev"
 	"github.com/scbizu/tape-go/pkg/llm"
@@ -20,46 +17,6 @@ import (
 
 //go:embed testdata/tape_golden.json
 var tapeGoldenJSON []byte
-
-func runGoldenBackends(ctx context.Context, configure func(storageBackend, testsuite.Fixture) testsuite.Config) error {
-	fixture, err := testsuite.ParseFixture(tapeGoldenJSON)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Tape golden: %s (%d source entries, %d windows, %d golden queries)\n", fixture.Title, fixture.SourceEntries, len(fixture.Windows()), len(fixture.Queries))
-	var failures error
-	for _, backend := range e2eBackends() {
-		config := configure(backend, fixture)
-		config.Progress = func(message string) { fmt.Println(message) }
-		fmt.Printf("Golden scenario: %s\n", config.Name)
-		dir, err := os.MkdirTemp("", "tape-go-golden-")
-		if err != nil {
-			return err
-		}
-		report, runErr := testsuite.Run(ctx, fixture, config, dir)
-		data, err := json.MarshalIndent(report, "", "  ")
-		if err == nil {
-			err = os.WriteFile(filepath.Join(dir, "report.json"), append(data, '\n'), 0600)
-		}
-		runErr = errors.Join(runErr, err)
-		fmt.Printf("golden report and tape: %s\n", dir)
-		if runErr != nil {
-			failures = errors.Join(failures, fmt.Errorf("%s: %w", config.Name, runErr))
-			continue
-		}
-		fmt.Printf("Golden %s: OK\n", config.Name)
-	}
-	return failures
-}
-
-func runStorageGolden(ctx context.Context) error {
-	return runGoldenBackends(ctx, func(backend storageBackend, _ testsuite.Fixture) testsuite.Config {
-		return testsuite.Config{
-			Name: "storage/" + backend.name,
-			Open: func(ctx context.Context, dir string) (*tape.Tape, error) { return newTape(ctx, backend, dir) },
-		}
-	})
-}
 
 // Scene endings are checkpoint opportunities. JEV still makes the keep/skip
 // decision for the complete view; intermediate source entries are not checkpoints.
@@ -76,7 +33,7 @@ func (d goldenSceneDecider) ShouldAnchor(ctx context.Context, projection view.Pr
 }
 
 // JEV reports derivation errors separately from Store. The adapter makes those
-// errors visible to the shared suite while keeping the original source entry.
+// errors visible to the behavior steps while keeping the original source entry.
 type goldenJevStorage struct {
 	*jevext.Storage
 	anchorErr error

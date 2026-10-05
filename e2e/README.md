@@ -1,31 +1,59 @@
-# Manual tape golden scenarios
+# Tape behavior scenarios
 
-Run the provider-independent storage scenario from the repository root. It needs no API keys:
+Review the product behavior in [`features/storage.feature`](features/storage.feature),
+[`features/agent.feature`](features/agent.feature), and
+[`features/jev.feature`](features/jev.feature). Godog executes each Given / When / Then
+step through `go test`; `_test.go` files contain the runner, steps and fixtures.
+Scenarios invoke the public Tape and agent SDKs directly. No binary build is needed.
+
+From the repository root (run `mise trust mise.toml` once for the new task file):
 
 ```sh
-go run ./e2e golden storage
+mise run e2e
+# Or without mise:
+go test -race ./e2e/... -timeout 120s
 ```
 
-Run the JEV retrieval scenario with local provider credentials:
+Four deterministic scenarios cover JSONL and bbolt persistence, close/reopen,
+handoff and rewind through the ADK runner. Only the agent's model responses are
+scripted; disk storage, session adaptation, tool dispatch and result delivery
+execute normally. No API keys or network access are required.
+
+For the two real JEV scenarios:
 
 ```sh
-go run ./e2e golden jev
+mise run e2e-live
+# Or without mise:
+TAPE_E2E_LIVE=1 go test -race ./e2e/... -run TestLiveJEVBehavior -count=1 -timeout 15m
 ```
 
-`go run ./e2e jev` remains an alias. The JEV key can be set via `JEV_API_KEY`, `jev.api_key`, or `provider.jev.api_key` in the ignored `e2e/config.toml`. With only a JEV key, the scenario uses a deterministic projection summary. For DeepSeek summaries, provide `DEEPSEEK_API_KEY`, `deepseek.api_key`, or `provider.deepseek.api_key`; `DEEPSEEK_MODEL` optionally selects the model. Summary and reranking requests omit `max_tokens` and use the provider's defaults. Generation requests still honor an explicitly supplied `MaxOutputTokens`.
+The default suite excludes `@live` scenarios. Explicitly enabling them requires
+`JEV_API_KEY`, `jev.api_key`, or `provider.jev.api_key` in the ignored
+`e2e/config.toml`; missing credentials fail the live suite. With only a JEV key,
+a deterministic projection summarizer is used. To use DeepSeek summaries, set
+`DEEPSEEK_API_KEY`, `deepseek.api_key`, or `provider.deepseek.api_key`.
+`DEEPSEEK_MODEL` optionally selects the model.
 
-Both scenarios use [The Lantern Road](testdata/tape_golden.json), an original fantasy expedition told in 100 source entries across 20 five-entry scenes. Recurring characters encounter different passwords, fares, bells, routes, supplies, and promises. Its 20 golden queries specify expected source entry IDs. The fixture contains source data and expectations, without a JEV-specific anchor requirement.
+[The Lantern Road](testdata/tape_golden.json) supplies 100 original source entries
+in 20 scenes and 20 queries with expected source entry IDs. Storage scenarios
+verify source IDs, kinds, content and ordering before and after restart. JEV
+scenarios additionally require at least 20 distinct complete-scene anchors,
+unchanged anchors after restart, and all queries to recover their expected source
+without unrelated scenes: 80 retrieval checks across both backends and phases.
+Assertions do not compare generated summary wording.
 
-The shared runner is [`pkg/tape/testsuite`](../pkg/tape/testsuite). It accepts fixtures of arbitrary size with contiguous windows of variable length. For each backend, it writes the fixture, verifies unchanged source IDs, kinds, content, and order, then closes and reopens the tape and repeats persistence validation. Derived anchor IDs, kinds, and contents must survive unchanged. When a search adapter is supplied, every golden query runs before and after restart; its result must contain the expected source entry and exclude unrelated windows. Golden values are source IDs, rather than exact generated summary text.
+Each scenario retains its temporary tape and `report.json`; `go test -v` prints
+the artifact directories even on success. Reports include anchors, retrieval
+results, expected/returned source IDs, timings and failures. Storage-only reports
+do not claim search coverage. These BDDs replace the old `golden` manual commands.
+The reusable `pkg/tape/testsuite` remains available to other consumers, but is not
+run alongside the BDDs.
 
-The storage scenario exercises JSONL and bbolt persistence with the same 100-entry fixture. It does not require anchors or execute semantic searches, and its report explicitly marks search coverage as disabled.
+Interactive chat and the real-model rewind demo live in
+[`examples/demo`](../examples/demo). They are examples, not automated acceptance
+checks. Protocol and package boundary tests remain beside their packages.
 
-The JEV scenario supplies a checkpoint policy, anchor validator, and `Tape.Find` search adapter to that shared runner:
-
-- Each scene ending is a checkpoint opportunity. JEV makes the real keep/skip decision for the complete scene, and the configured summarizer builds its memory state.
-- At least 20 JEV anchors must be generated through the storage decorator. Each must cover one distinct bounded scene. With the 100 source entries, this produces at least 120 persisted entries.
-- All 20 queries must pass both before and after restart on JSONL and bbolt: 80 retrieval checks in total.
-
-Each backend retains its temporary tape and a `report.json` with anchor contents, search coverage, expected and returned source IDs, timings, and failures. The command prints progress, phase totals, and the artifact directory. Any storage, anchor, or retrieval failure causes a nonzero exit status. These remain manual commands; there are no e2e `*_test.go` files.
-
-To add another provider or storage implementation, reuse `testsuite.ParseFixture` and `testsuite.Run` with a `testsuite.Config`. Supply an `Open` function that initializes and reopens the same tape directory. Optionally supply `Search`, `MinAnchors`, and `ValidateAnchors` for the capabilities under test. `Progress` receives log messages, and the returned `Report` can be saved by the caller. Storage-only configurations omit `Search` and do not claim query coverage.
+To add behavior, write a scenario with observable outcomes in `features/`, then
+register its steps. Each scenario has isolated state and a fresh disk directory;
+cleanup closes storage even after failure. `mise run test` runs package tests and
+the deterministic BDDs together (the nested e2e module is included explicitly).

@@ -1,0 +1,11 @@
+[tasks.e2e]
+description = "Run deterministic Tape behavior scenarios"
+run = "go test -race ./e2e/... -timeout 120s"
+
+[tasks.e2e-live]
+description = "Run real JEV behavior scenarios (requires JEV credentials)"
+run = "TAPE_E2E_LIVE=1 go test -race ./e2e/... -run TestLiveJEVBehavior -count=1 -timeout 15m"
+
+[tasks.test]
+description = "Run package tests and deterministic end-to-end behaviors"
+run = "go test -race ./... ./e2e/... -timeout 120s"

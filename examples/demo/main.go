@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -45,35 +44,6 @@ type storageBackend struct {
 
 func main() {
 	ctx := owner.WithOwnerId(context.Background(), ownerID)
-	if len(os.Args) > 1 && os.Args[1] == "golden" {
-		mode := "storage"
-		if len(os.Args) > 2 {
-			mode = os.Args[2]
-		}
-		if mode == "storage" {
-			if err := runStorageGolden(ctx); err != nil {
-				log.Fatal(err)
-			}
-			return
-		}
-		if mode != "jev" {
-			log.Fatalf("unknown golden scenario %q; use storage or jev", mode)
-		}
-	}
-	if len(os.Args) > 1 && (os.Args[1] == "jev" || os.Args[1] == "golden") {
-		jevKey, err := jevAPIKey(configPath())
-		if err != nil {
-			log.Fatal(err)
-		}
-		deepSeekKey, err := optionalDeepSeekAPIKey(configPath())
-		if err != nil {
-			log.Fatal(err)
-		}
-		if err := runJevE2E(ctx, deepSeekKey, jevKey); err != nil {
-			log.Fatal(err)
-		}
-		return
-	}
 	apiKey, err := deepSeekAPIKey(configPath())
 	if err != nil {
 		log.Fatal(err)
@@ -145,7 +115,7 @@ func runRewindDemoWithBackend(ctx context.Context, apiKey string, backend storag
 		"Use rewind with max_anchors=1, then tell me which archived range it found.",
 		genai.RoleUser,
 	)
-	return runToolCallE2E(ctx, r, message)
+	return runOnce(ctx, r, message)
 }
 
 func runChat(ctx context.Context, apiKey string, backend storageBackend) error {
@@ -258,37 +228,6 @@ func runOnce(ctx context.Context, r *runner.Runner, message *genai.Content) erro
 			return err
 		}
 		printEvent(event.Content)
-	}
-	return nil
-}
-
-func runToolCallE2E(ctx context.Context, r *runner.Runner, message *genai.Content) error {
-	var sawCall, sawResponse, sawFinalText bool
-	for event, err := range r.Run(ctx, ownerID, sessionID, message, adkagent.RunConfig{}) {
-		if err != nil {
-			return err
-		}
-		printEvent(event.Content)
-		for _, part := range eventParts(event.Content) {
-			if part.FunctionCall != nil && part.FunctionCall.Name == "rewind" {
-				sawCall = true
-			}
-			if part.FunctionResponse != nil && part.FunctionResponse.Name == "rewind" {
-				sawResponse = true
-			}
-			if part.Text != "" && sawResponse {
-				sawFinalText = true
-			}
-		}
-	}
-	if !sawCall {
-		return errors.New("toolcall e2e: missing rewind tool call")
-	}
-	if !sawResponse {
-		return errors.New("toolcall e2e: missing rewind tool response")
-	}
-	if !sawFinalText {
-		return errors.New("toolcall e2e: missing final text after tool response")
 	}
 	return nil
 }
@@ -417,7 +356,7 @@ func optionalDeepSeekAPIKey(path string) (string, error) {
 
 func configPath() string {
 	_, file, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(file), "config.toml")
+	return filepath.Join(filepath.Dir(file), "..", "..", "e2e", "config.toml")
 }
 
 func printEvent(content *genai.Content) {
