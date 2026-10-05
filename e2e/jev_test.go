@@ -1,4 +1,4 @@
-package main
+package e2e
 
 import (
 	"context"
@@ -10,32 +10,8 @@ import (
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/scbizu/tape-go/pkg/llm"
-	"github.com/scbizu/tape-go/pkg/provider/ds"
-	jevprovider "github.com/scbizu/tape-go/pkg/provider/jev"
-	"github.com/scbizu/tape-go/pkg/tape/testsuite"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
-
-func runJevE2E(ctx context.Context, deepSeekKey, jevKey string) error {
-	var summarizer llm.Summarizer = projectionSummarizer{}
-	if deepSeekKey != "" {
-		model, err := ds.NewModel(deepSeekKey, os.Getenv("DEEPSEEK_MODEL"))
-		if err != nil {
-			return err
-		}
-		summarizer = model
-		fmt.Printf("JEV summarizer: DeepSeek (%s)\n", model.Name())
-	} else {
-		fmt.Println("JEV summarizer: deterministic projection")
-	}
-	client, err := jevprovider.NewClient(jevKey)
-	if err != nil {
-		return err
-	}
-	return runGoldenBackends(ctx, func(backend storageBackend, fixture testsuite.Fixture) testsuite.Config {
-		return jevGoldenConfig(backend, fixture, summarizer, client)
-	})
-}
 
 // projectionSummarizer keeps the e2e scenario runnable with only a JEV key.
 // The real JEV service still decides whether to anchor and scores retrieval.
@@ -82,4 +58,34 @@ func jevAPIKey(path string) (string, error) {
 		return "", fmt.Errorf("JEV_API_KEY, provider.jev.api_key, or jev.api_key in %s is required", path)
 	}
 	return config.Jev.APIKey, nil
+}
+
+func optionalDeepSeekAPIKey(path string) (string, error) {
+	if apiKey := os.Getenv("DEEPSEEK_API_KEY"); apiKey != "" {
+		return apiKey, nil
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read DeepSeek config %s: %w", path, err)
+	}
+	var config struct {
+		DeepSeek struct {
+			APIKey string `toml:"api_key"`
+		} `toml:"deepseek"`
+		Provider struct {
+			DeepSeek struct {
+				APIKey string `toml:"api_key"`
+			} `toml:"deepseek"`
+		} `toml:"provider"`
+	}
+	if err := toml.Unmarshal(data, &config); err != nil {
+		return "", fmt.Errorf("parse DeepSeek config %s: %w", path, err)
+	}
+	if config.Provider.DeepSeek.APIKey != "" {
+		return config.Provider.DeepSeek.APIKey, nil
+	}
+	return config.DeepSeek.APIKey, nil
 }
