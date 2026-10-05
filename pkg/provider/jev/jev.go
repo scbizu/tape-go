@@ -1,4 +1,5 @@
-// Package jev adapts TypeSafe AI's Jev API to jevext.Classifier.
+// Package jev adapts TypeSafe AI's Jev API to the decision extension's
+// AnchorDecider and Classifier interfaces.
 package jev
 
 import (
@@ -14,7 +15,7 @@ import (
 	"uuid"
 
 	"github.com/hashicorp/go-retryablehttp"
-	jevext "github.com/scbizu/tape-go/pkg/ext/jev"
+	"github.com/scbizu/tape-go/pkg/ext/decision"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
@@ -23,8 +24,8 @@ const (
 	DefaultModel    = "jev-latest"
 )
 
-var _ jevext.Classifier = (*Client)(nil)
-var _ jevext.AnchorDecider = (*Client)(nil)
+var _ decision.Classifier = (*Client)(nil)
+var _ decision.AnchorDecider = (*Client)(nil)
 
 type HTTPClient interface {
 	Do(*http.Request) (*http.Response, error)
@@ -113,8 +114,8 @@ func NewClient(apiKey string, opts ...Option) (*Client, error) {
 }
 
 type candidateState struct {
-	ID    string             `json:"id"`
-	State jevext.MemoryState `json:"state"`
+	ID    string               `json:"id"`
+	State decision.MemoryState `json:"state"`
 }
 
 type question struct {
@@ -154,7 +155,7 @@ type anchorResponse struct {
 	} `json:"answers"`
 }
 
-// ShouldAnchor asks Jev whether one entry contains durable information worth
+// ShouldAnchor asks Jev whether a complete view contains durable information worth
 // exposing as a future memory-search candidate.
 func (c *Client) ShouldAnchor(ctx context.Context, projection view.Projection) (bool, error) {
 	if c == nil || c.httpClient == nil {
@@ -205,14 +206,14 @@ func (c *Client) ShouldAnchor(ctx context.Context, projection view.Projection) (
 
 // Classify asks Jev to independently score every candidate against the query
 // in one request. Best-result selection belongs to the finder engine.
-func (c *Client) Classify(ctx context.Context, query string, candidates []jevext.MemoryState) iter.Seq2[jevext.Classification, error] {
-	return func(yield func(jevext.Classification, error) bool) {
+func (c *Client) Classify(ctx context.Context, query string, candidates []decision.MemoryState) iter.Seq2[decision.Classification, error] {
+	return func(yield func(decision.Classification, error) bool) {
 		if c == nil || c.httpClient == nil {
-			yield(jevext.Classification{}, errors.New("jev: client is not enabled"))
+			yield(decision.Classification{}, errors.New("jev: client is not enabled"))
 			return
 		}
 		if strings.TrimSpace(query) == "" {
-			yield(jevext.Classification{}, errors.New("jev: empty classification query"))
+			yield(decision.Classification{}, errors.New("jev: empty classification query"))
 			return
 		}
 		if len(candidates) == 0 {
@@ -224,7 +225,7 @@ func (c *Client) Classify(ctx context.Context, query string, candidates []jevext
 		ids := make([]string, len(candidates))
 		for i, candidate := range candidates {
 			if candidate.IsZero() {
-				yield(jevext.Classification{}, fmt.Errorf("jev: candidate %d has empty state", i))
+				yield(decision.Classification{}, fmt.Errorf("jev: candidate %d has empty state", i))
 				return
 			}
 			id := uuid.New().String()
@@ -243,22 +244,22 @@ func (c *Client) Classify(ctx context.Context, query string, candidates []jevext
 		}
 		body, err := json.Marshal(payload)
 		if err != nil {
-			yield(jevext.Classification{}, fmt.Errorf("jev: encode classification request: %w", err))
+			yield(decision.Classification{}, fmt.Errorf("jev: encode classification request: %w", err))
 			return
 		}
 
 		var response classifyResponse
 		if err := c.post(ctx, body, &response); err != nil {
-			yield(jevext.Classification{}, err)
+			yield(decision.Classification{}, err)
 			return
 		}
 		for i, id := range ids {
 			answer, ok := response.Answers[id]
 			if !ok {
-				yield(jevext.Classification{}, fmt.Errorf("jev: response missing answer %q", id))
+				yield(decision.Classification{}, fmt.Errorf("jev: response missing answer %q", id))
 				return
 			}
-			if !yield(jevext.Classification{Index: i, Score: answer.Score, Confidence: answer.Confidence}, nil) {
+			if !yield(decision.Classification{Index: i, Score: answer.Score, Confidence: answer.Confidence}, nil) {
 				return
 			}
 		}

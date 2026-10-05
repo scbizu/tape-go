@@ -1,4 +1,4 @@
-package jev
+package decision
 
 import (
 	"slices"
@@ -6,7 +6,7 @@ import (
 	generic "github.com/huandu/go-clone/generic"
 )
 
-// Snapshot contains the currently effective JEV anchors.
+// Snapshot contains the currently effective decision anchors.
 type Snapshot struct {
 	Anchors []AnchorRecord
 }

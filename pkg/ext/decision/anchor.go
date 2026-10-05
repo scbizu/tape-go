@@ -1,5 +1,5 @@
-// Package jev adds durable JEV anchoring and retrieval to a tape.
-package jev
+// Package decision adds vendor-neutral durable anchoring and retrieval to a tape.
+package decision
 
 import (
 	"encoding/json"
@@ -12,12 +12,13 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
-const Kind entry.EntryKind = "anchor:jev"
+// Kind identifies vendor-neutral decision anchors written by this extension.
+const Kind entry.EntryKind = "anchor:decision"
 
-// MemoryState is the structured memory retained by a JEV anchor.
+// MemoryState is the structured memory retained by a decision anchor.
 type MemoryState = llm.Summary
 
-// Anchor is the persisted JEV payload. Its JSON shape matches existing tapes.
+// Anchor is the persisted decision payload.
 type Anchor struct {
 	State      MemoryState
 	SeqS, SeqE entry.Seq
@@ -26,11 +27,11 @@ type Anchor struct {
 
 func NewAnchor(seq entry.Seq, owner string, anchor Anchor) (entry.Entry, error) {
 	if anchor.State.IsZero() {
-		return entry.Entry{}, errors.New("jev: anchor state is empty")
+		return entry.Entry{}, errors.New("decision: anchor state is empty")
 	}
 	payload, err := json.Marshal(anchor)
 	if err != nil {
-		return entry.Entry{}, fmt.Errorf("jev: encode anchor: %w", err)
+		return entry.Entry{}, fmt.Errorf("decision: encode anchor: %w", err)
 	}
 	return entry.NewEntry(
 		entry.WithEntryID(seq),
@@ -49,14 +50,14 @@ type AnchorRecord struct {
 
 func AnchorFromEntry(e entry.EntryLike) (AnchorRecord, error) {
 	if e == nil || e.GetKind() != Kind {
-		return AnchorRecord{}, errors.New("jev: entry is not a JEV anchor")
+		return AnchorRecord{}, errors.New("decision: entry is not a decision anchor")
 	}
 	var anchor Anchor
 	if err := json.Unmarshal([]byte(e.GetSummary()), &anchor); err != nil {
-		return AnchorRecord{}, fmt.Errorf("jev: decode anchor %s: %w", e.GetID(), err)
+		return AnchorRecord{}, fmt.Errorf("decision: decode anchor %s: %w", e.GetID(), err)
 	}
 	if anchor.State.IsZero() || anchor.SeqS.Cmp(anchor.SeqE) > 0 {
-		return AnchorRecord{}, fmt.Errorf("jev: invalid anchor %s", e.GetID())
+		return AnchorRecord{}, fmt.Errorf("decision: invalid anchor %s", e.GetID())
 	}
 	return AnchorRecord{
 		Seq: e.GetID(), State: anchor.State,

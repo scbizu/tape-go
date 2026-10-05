@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	jevext "github.com/scbizu/tape-go/pkg/ext/jev"
+	"github.com/scbizu/tape-go/pkg/ext/decision"
 	"github.com/scbizu/tape-go/pkg/llm"
 	jevprovider "github.com/scbizu/tape-go/pkg/provider/jev"
 	"github.com/scbizu/tape-go/pkg/tape"
@@ -35,7 +35,7 @@ func (d goldenSceneDecider) ShouldAnchor(ctx context.Context, projection view.Pr
 // JEV reports derivation errors separately from Store. The adapter makes those
 // errors visible to the behavior steps while keeping the original source entry.
 type goldenJevStorage struct {
-	*jevext.Storage
+	*decision.Storage
 	anchorErr error
 }
 
@@ -58,7 +58,7 @@ func jevGoldenConfig(backend storageBackend, fixture testsuite.Fixture, summariz
 			}
 			t := &tape.Tape{OwnerID: ownerID}
 			checked := &goldenJevStorage{}
-			decorated, err := jevext.NewStorage(base, &t.View, jevext.Config{
+			decorated, err := decision.NewStorage(base, &t.View, decision.Config{
 				Decider: goldenSceneDecider{client: client, ends: ends}, Summarizer: summarizer, Classifier: client,
 				OnError: func(err error) { checked.anchorErr = errors.Join(checked.anchorErr, err) },
 			})
@@ -89,7 +89,7 @@ func validateJevGoldenAnchors(fixture testsuite.Fixture, seqs map[string]entry.S
 	}
 	seen := make(map[string]bool)
 	for _, anchor := range anchors {
-		record, err := jevext.AnchorFromEntry(entry.NewEntry(entry.WithEntryID(anchor.Seq), entry.WithEntryKind(anchor.Kind), entry.WithEntryContent(anchor.Content)))
+		record, err := decision.AnchorFromEntry(entry.NewEntry(entry.WithEntryID(anchor.Seq), entry.WithEntryKind(anchor.Kind), entry.WithEntryContent(anchor.Content)))
 		if err != nil {
 			return err
 		}

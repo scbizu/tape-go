@@ -14,7 +14,7 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
 
-	jevext "github.com/scbizu/tape-go/pkg/ext/jev"
+	"github.com/scbizu/tape-go/pkg/ext/decision"
 	"github.com/scbizu/tape-go/pkg/tape"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
@@ -31,15 +31,15 @@ func (searchDecider) ShouldAnchor(context.Context, view.Projection) (bool, error
 
 type searchSummarizer struct{}
 
-func (searchSummarizer) Summarize(context.Context, view.Projection) (jevext.MemoryState, error) {
-	return jevext.MemoryState{Decisions: []string{"saved"}}, nil
+func (searchSummarizer) Summarize(context.Context, view.Projection) (decision.MemoryState, error) {
+	return decision.MemoryState{Decisions: []string{"saved"}}, nil
 }
 
 type searchClassifier struct{}
 
-func (searchClassifier) Classify(context.Context, string, []jevext.MemoryState) iter.Seq2[jevext.Classification, error] {
-	return func(yield func(jevext.Classification, error) bool) {
-		yield(jevext.Classification{Index: 0, Score: 1}, nil)
+func (searchClassifier) Classify(context.Context, string, []decision.MemoryState) iter.Seq2[decision.Classification, error] {
+	return func(yield func(decision.Classification, error) bool) {
+		yield(decision.Classification{Index: 0, Score: 1}, nil)
 	}
 }
 
@@ -52,7 +52,7 @@ func TestSearchMemoryUsesConfiguredTapeExtension(t *testing.T) {
 	}
 	base.Fs = afero.NewMemMapFs()
 	tape := &tape.Tape{OwnerID: ownerID}
-	decorated, err := jevext.NewStorage(base, &tape.View, jevext.Config{
+	decorated, err := decision.NewStorage(base, &tape.View, decision.Config{
 		Decider: searchDecider{}, Summarizer: searchSummarizer{}, Classifier: searchClassifier{},
 	})
 	if err != nil {
@@ -65,8 +65,8 @@ func TestSearchMemoryUsesConfiguredTapeExtension(t *testing.T) {
 	if _, err := tape.Store(ctx, entry.NewEntry(entry.WithEntryKind(entry.EntryUser), entry.WithEntryContent("remember me"))); err != nil {
 		t.Fatal(err)
 	}
-	anchor, err := jevext.NewAnchor(entry.Seq{}, ownerID, jevext.Anchor{
-		State: jevext.MemoryState{Decisions: []string{"remember me"}},
+	anchor, err := decision.NewAnchor(entry.Seq{}, ownerID, decision.Anchor{
+		State: decision.MemoryState{Decisions: []string{"remember me"}},
 		SeqS:  entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2),
 	})
 	if err != nil {

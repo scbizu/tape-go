@@ -11,7 +11,7 @@ import (
 	"testing"
 	"uuid"
 
-	jevext "github.com/scbizu/tape-go/pkg/ext/jev"
+	"github.com/scbizu/tape-go/pkg/ext/decision"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
@@ -37,8 +37,8 @@ func jsonResponse(status int, body string) *http.Response {
 	}
 }
 
-func collectClassifications(seq iter.Seq2[jevext.Classification, error]) ([]jevext.Classification, error) {
-	var results []jevext.Classification
+func collectClassifications(seq iter.Seq2[decision.Classification, error]) ([]decision.Classification, error) {
+	var results []decision.Classification
 	for result, err := range seq {
 		if err != nil {
 			return nil, err
@@ -93,7 +93,7 @@ func TestClientClassify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := collectClassifications(client.Classify(context.Background(), "database failure", []jevext.MemoryState{
+	got, err := collectClassifications(client.Classify(context.Background(), "database failure", []decision.MemoryState{
 		{Decisions: []string{"old memory"}}, {Decisions: []string{"best memory"}}, {Decisions: []string{"related memory"}},
 	}))
 	if err != nil {
@@ -189,7 +189,7 @@ func TestClientRetriesRateLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collectClassifications(client.Classify(context.Background(), "query", []jevext.MemoryState{{Decisions: []string{"hit"}}})); err != nil {
+	if _, err := collectClassifications(client.Classify(context.Background(), "query", []decision.MemoryState{{Decisions: []string{"hit"}}})); err != nil {
 		t.Fatal(err)
 	}
 	if attempts != 2 {
@@ -208,7 +208,7 @@ func TestClientReturnsAPIError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = collectClassifications(client.Classify(context.Background(), "query", []jevext.MemoryState{{Decisions: []string{"hit"}}}))
+	_, err = collectClassifications(client.Classify(context.Background(), "query", []decision.MemoryState{{Decisions: []string{"hit"}}}))
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("Classify error = %v", err)
@@ -230,7 +230,7 @@ func TestClientReturnsResponseReadError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = collectClassifications(client.Classify(context.Background(), "query", []jevext.MemoryState{{Decisions: []string{"hit"}}}))
+	_, err = collectClassifications(client.Classify(context.Background(), "query", []decision.MemoryState{{Decisions: []string{"hit"}}}))
 	if !errors.Is(err, want) {
 		t.Fatalf("Classify error = %v, want response read error", err)
 	}
