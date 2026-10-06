@@ -1,5 +1,23 @@
 # A2A List Pager Review Design
 
+## Design diagram
+
+```mermaid
+flowchart TD
+    Request["List request: page size and optional token"] --> Pager["newTaskPager: normalize size and decode cursor"]
+    Pager --> Owner["Store.List: authenticate owner and sync projection"]
+    Owner --> Filter["Filter tasks and sort by timestamp / task ID descending"]
+    Filter --> Total["Capture TotalSize before pagination"]
+    Total --> Page["taskPager.page: find cursor boundary and select page"]
+    Page --> Token["Encode next cursor if more items remain"]
+    Token --> Clone["Store.List: clone tasks, trim history, select artifacts"]
+    Clone --> Response["Tasks, TotalSize, PageSize, NextPageToken"]
+    Pager --> Invalid["Invalid size: ErrInvalidRequest; invalid token: ErrParseError"]
+```
+
+The pager receives already filtered and sorted items. Authentication and task
+response shaping remain responsibilities of `Store.List`.
+
 ## Context
 
 PR #2 has two unresolved review threads in `pkg/tape/a2a/list.go`: the List path should use a direct page-size check instead of the generic validator helper, and cursor pagination should move out of `Store.List` into a Pager abstraction.

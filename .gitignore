@@ -2,3 +2,6 @@
 .delta
 mise.local.toml
 e2e/config.toml
+
+# Project plans live in Obsidian, outside version control.
+/docs/plans/

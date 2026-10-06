@@ -4,6 +4,29 @@ Status: implemented on `feature/a2a-tape-store`
 
 Date: 2026-08-03
 
+## Architecture diagram
+
+```mermaid
+flowchart TD
+    Client["Standard A2A client"] --> Server["A2A server: transport and lifecycle"]
+    Server --> Store["TapeTaskStore: Create / Update / Get / List"]
+    Server --> Direct["Direct-message persistence interceptor"]
+    Store --> Auth["Resolve authenticated owner"]
+    Direct --> Auth
+    Auth --> Codec["Validate native payloads and record identities"]
+    Codec --> Append["Append one record: snapshot + event, or direct message"]
+    Append --> Tape["Owner-isolated Tape: JSONL or bbolt"]
+    Append --> Committed["Append succeeds"]
+    Committed --> Publish["Return response / stream / push update"]
+    Tape --> Replay["Ordered replay; corrupt records fail closed"]
+    Replay --> Projection["Rebuildable per-owner task projection and versions"]
+    Projection --> Store
+```
+
+Task updates compare `PrevVersion` before appending. Publication follows a
+successful append; reads and restart recovery use the owner-scoped projection.
+Tape Seq orders replay, while task versions advance independently per task.
+
 ## Purpose
 
 This document defines how a Tape-backed agent persists A2A 1.0 work. It is a
