@@ -1,6 +1,9 @@
 # A2A 1.0 Tape Storage Profile
 
-Status: implemented on `feature/a2a-tape-store`
+Status: historical design; the `pkg/tape/a2a` implementation has been removed
+from tape-go. Peer discovery and permissioned tape-view borrowing belong to
+downstream anra. The specification and diagram below describe the former
+adapter, not a currently supported tape-go API.
 
 Date: 2026-08-03
 

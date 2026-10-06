@@ -1,5 +1,8 @@
 # A2A List Pager Review Design
 
+Status: historical design; the `pkg/tape/a2a` implementation has been removed
+from tape-go. The specification and diagram below describe its former pager.
+
 ## Design diagram
 
 ```mermaid
@@ -20,7 +23,7 @@ response shaping remain responsibilities of `Store.List`.
 
 ## Context
 
-PR #2 has two unresolved review threads in `pkg/tape/a2a/list.go`: the List path should use a direct page-size check instead of the generic validator helper, and cursor pagination should move out of `Store.List` into a Pager abstraction.
+PR #2 raised two review threads in the former `pkg/tape/a2a/list.go`: the List path should use a direct page-size check instead of the generic validator helper, and cursor pagination should move out of `Store.List` into a Pager abstraction.
 
 ## Decision
 
