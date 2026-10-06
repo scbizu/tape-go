@@ -1,4 +1,4 @@
-package jev
+package decision
 
 import (
 	"fmt"
@@ -10,7 +10,7 @@ var structureValidator = validator.New(validator.WithRequiredStructEnabled())
 
 func validateStructure(name string, value any) error {
 	if err := structureValidator.Struct(value); err != nil {
-		return fmt.Errorf("jev: validate %s: %w", name, err)
+		return fmt.Errorf("decision: validate %s: %w", name, err)
 	}
 	return nil
 }

@@ -1,4 +1,4 @@
-package jev
+package decision
 
 import (
 	"context"
@@ -10,19 +10,23 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
-// Classification is a JEV relevance judgment for one candidate.
+// Classification is a vendor-neutral relevance judgment for one candidate.
+// Index refers to the input candidate slice. Higher Score is more relevant;
+// higher Confidence breaks ties. Scores must be comparable within one call.
 type Classification struct {
 	Index      int
 	Score      float64
 	Confidence float64
 }
 
-// Classifier scores the active anchor states without embeddings.
+// Classifier scores the active anchor states without embeddings. Implementations
+// translate vendor responses to Classification, may yield results in any order,
+// and must stop when yield returns false. An empty sequence means no match.
 type Classifier interface {
 	Classify(context.Context, string, []MemoryState) iter.Seq2[Classification, error]
 }
 
-// Finder uses the snapshot owned by one JEV storage decorator.
+// Finder uses the snapshot owned by one decision storage decorator.
 type Finder struct {
 	Query      string
 	Classifier Classifier
@@ -42,7 +46,7 @@ func (j Finder) Find(ctx context.Context, tape storage.EntryStorage) (view.Entry
 
 func (j Finder) FindAll(ctx context.Context, tape storage.EntryStorage) ([]view.EntryView, error) {
 	if j.Query == "" || j.Classifier == nil || j.storage == nil {
-		return nil, errors.New("jev: finder is not configured")
+		return nil, errors.New("decision: finder is not configured")
 	}
 	snapshot, err := j.storage.snapshot(ctx)
 	if err != nil {
@@ -62,13 +66,13 @@ func (j Finder) FindAll(ctx context.Context, tape storage.EntryStorage) ([]view.
 	found := false
 	for result, err := range j.Classifier.Classify(ctx, j.Query, states) {
 		if err != nil {
-			return nil, fmt.Errorf("jev: classify: %w", err)
+			return nil, fmt.Errorf("decision: classify: %w", err)
 		}
 		if result.Index < 0 || result.Index >= len(candidates) {
-			return nil, fmt.Errorf("jev: classification index %d out of range", result.Index)
+			return nil, fmt.Errorf("decision: classification index %d out of range", result.Index)
 		}
 		if _, ok := seen[result.Index]; ok {
-			return nil, fmt.Errorf("jev: duplicate classification index %d", result.Index)
+			return nil, fmt.Errorf("decision: duplicate classification index %d", result.Index)
 		}
 		seen[result.Index] = struct{}{}
 		if !found || result.Score > best.Score || result.Score == best.Score && result.Confidence > best.Confidence {

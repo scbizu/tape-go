@@ -1,4 +1,4 @@
-package jev
+package decision
 
 import (
 	"context"
@@ -10,13 +10,13 @@ import (
 )
 
 // AnchorDecider decides whether a complete view projection should trigger a
-// durable Jev memory checkpoint.
+// durable decision memory checkpoint.
 type AnchorDecider interface {
 	ShouldAnchor(context.Context, view.Projection) (bool, error)
 }
 
-// AnchorPolicy lets Jev decide when to checkpoint, then delegates the
-// bounded active-view summary to an LLM provider.
+// AnchorPolicy asks a decision provider when to checkpoint, then delegates the
+// bounded active-view summary to an independently configured LLM provider.
 type AnchorPolicy struct {
 	Decider    AnchorDecider  `validate:"required"`
 	Summarizer llm.Summarizer `validate:"required"`
@@ -27,7 +27,7 @@ func NewAnchorPolicy(decider AnchorDecider, summarizer llm.Summarizer) AnchorPol
 }
 
 func (p AnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike, memory view.EntryView) (entry.EntryLike, bool, error) {
-	if err := validateStructure("Jev anchor policy", p); err != nil {
+	if err := validateStructure("decision anchor policy", p); err != nil {
 		return nil, false, err
 	}
 	if latest == nil || latest.GetKind().IsAnchor() {
@@ -50,7 +50,7 @@ func (p AnchorPolicy) MakeAnchor(ctx context.Context, latest entry.EntryLike, me
 		return nil, false, err
 	}
 	if summary.IsZero() {
-		return nil, false, errors.New("jev: anchor summarizer returned empty memory state")
+		return nil, false, errors.New("decision: anchor summarizer returned empty memory state")
 	}
 	ownerID := latest.GetOwner()
 	if ownerID == "" {

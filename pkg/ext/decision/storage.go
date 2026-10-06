@@ -1,4 +1,4 @@
-package jev
+package decision
 
 import (
 	"context"
@@ -30,7 +30,7 @@ type snapshotKey struct {
 	owner, session string
 }
 
-// Storage decorates a tape with JEV anchoring and search. All ordinary storage
+// Storage decorates a tape with decision anchoring and search. All ordinary storage
 // methods are delegated to the wrapped storage.
 type Storage struct {
 	storage.TapeStorage
@@ -46,14 +46,14 @@ type Storage struct {
 
 func NewStorage(base storage.TapeStorage, activeView *view.EntryView, config Config) (*Storage, error) {
 	if base == nil || activeView == nil {
-		return nil, errors.New("jev: storage and active view are required")
+		return nil, errors.New("decision: storage and active view are required")
 	}
 	policy := NewAnchorPolicy(config.Decider, config.Summarizer)
 	if err := validateStructure("anchor policy", policy); err != nil {
 		return nil, err
 	}
 	if config.Classifier == nil {
-		return nil, errors.New("jev: classifier is required")
+		return nil, errors.New("decision: classifier is required")
 	}
 	return &Storage{
 		TapeStorage: base,
@@ -78,7 +78,7 @@ func (s *Storage) Finder(query string) finder.Engine {
 	return Finder{Query: query, Classifier: s.classifier, storage: s}
 }
 
-// Init rebuilds the active JEV frontier from persisted anchors. The rebuilt
+// Init rebuilds the active decision frontier from persisted anchors. The rebuilt
 // snapshot becomes visible only after the complete enumeration succeeds.
 func (s *Storage) Init(ctx context.Context) error {
 	s.storeMu.Lock()
@@ -94,13 +94,13 @@ func (s *Storage) Init(ctx context.Context) error {
 	var previous entry.Seq
 	for anchor, err := range s.TapeStorage.Anchors(ctx) {
 		if err != nil {
-			return fmt.Errorf("jev: restore anchors: %w", err)
+			return fmt.Errorf("decision: restore anchors: %w", err)
 		}
 		if anchor == nil {
-			return errors.New("jev: restore anchors: nil anchor")
+			return errors.New("decision: restore anchors: nil anchor")
 		}
 		if !previous.IsZero() && anchor.GetID().Cmp(previous) <= 0 {
-			return errors.New("jev: anchors are not in ascending sequence order")
+			return errors.New("decision: anchors are not in ascending sequence order")
 		}
 		previous = anchor.GetID()
 		if anchor.GetKind() != Kind {
@@ -144,11 +144,11 @@ func (s *Storage) Store(ctx context.Context, e entry.EntryLike) (entry.EntryLike
 		return nil, err
 	}
 	if stored == nil {
-		s.report(errors.New("jev: stored entry is nil"))
+		s.report(errors.New("decision: stored entry is nil"))
 		return e, nil
 	}
 	if stored.GetID().IsZero() {
-		s.report(errors.New("jev: stored entry has no ID"))
+		s.report(errors.New("decision: stored entry has no ID"))
 		return stored, nil
 	}
 	start := active.Scope.SeqS
@@ -160,19 +160,19 @@ func (s *Storage) Store(ctx context.Context, e entry.EntryLike) (entry.EntryLike
 	}
 	memory, err := s.TapeStorage.Range(ctx, view.EntryRange{SeqS: start, SeqE: stored.GetID().Next()})
 	if err != nil {
-		s.report(fmt.Errorf("jev: assemble anchor view: %w", err))
+		s.report(fmt.Errorf("decision: assemble anchor view: %w", err))
 		return stored, nil
 	}
 	anchor, ok, err := s.policy.MakeAnchor(ctx, stored, memory)
 	if err != nil {
-		s.report(fmt.Errorf("jev: anchor policy: %w", err))
+		s.report(fmt.Errorf("decision: anchor policy: %w", err))
 		return stored, nil
 	}
 	if !ok {
 		return stored, nil
 	}
 	if anchor == nil {
-		s.report(errors.New("jev: anchor policy returned nil anchor"))
+		s.report(errors.New("decision: anchor policy returned nil anchor"))
 		return stored, nil
 	}
 	s.storeMu.Lock()
@@ -183,7 +183,7 @@ func (s *Storage) Store(ctx context.Context, e entry.EntryLike) (entry.EntryLike
 	}
 	s.storeMu.Unlock()
 	if err != nil {
-		s.report(fmt.Errorf("jev: store derived anchor: %w", err))
+		s.report(fmt.Errorf("decision: store derived anchor: %w", err))
 	} else if applyErr != nil {
 		s.report(applyErr)
 	}
@@ -208,14 +208,14 @@ func (s *Storage) snapshot(ctx context.Context) (Snapshot, error) {
 	result := snapshot.Clone()
 	s.mu.RUnlock()
 	if !ok {
-		return Snapshot{}, errors.New("jev: storage is not initialized for this owner and session")
+		return Snapshot{}, errors.New("decision: storage is not initialized for this owner and session")
 	}
 	return result, nil
 }
 
 func (s *Storage) applyStored(ctx context.Context, stored entry.EntryLike) error {
 	if stored == nil {
-		return errors.New("jev: stored anchor is nil")
+		return errors.New("decision: stored anchor is nil")
 	}
 	record, err := AnchorFromEntry(stored)
 	if err != nil {
@@ -233,7 +233,7 @@ func (s *Storage) applyStored(ctx context.Context, stored entry.EntryLike) error
 	}
 	s.mu.Unlock()
 	if !ok {
-		return errors.New("jev: storage is not initialized for this owner and session")
+		return errors.New("decision: storage is not initialized for this owner and session")
 	}
 	return nil
 }

@@ -196,7 +196,7 @@ func TestModelSummarizeRejectsStateWithoutDecision(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := llm.Summarize(context.Background(), projection); err == nil {
-		t.Fatal("Summarize accepted Jev memory state without a decision")
+		t.Fatal("Summarize accepted memory state without a decision")
 	}
 }
 

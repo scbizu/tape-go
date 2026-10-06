@@ -1,4 +1,4 @@
-package jev
+package decision
 
 import (
 	"context"
@@ -59,7 +59,7 @@ func TestAnchorPolicyDecidesFromWholeView(t *testing.T) {
 	}
 }
 
-func TestAnchorPolicyCreatesJevAnchor(t *testing.T) {
+func TestAnchorPolicyCreatesDecisionAnchor(t *testing.T) {
 	t.Parallel()
 
 	memoryState := fixedSummarizer{

@@ -1,4 +1,4 @@
-package jev
+package decision
 
 import (
 	"context"
@@ -101,4 +101,50 @@ func TestInitDoesNotPublishPartialSnapshot(t *testing.T) {
 	if _, err := store.snapshot(context.Background()); err == nil {
 		t.Fatal("Init published a partial snapshot")
 	}
+}
+
+func TestStorageOnlyTracksDecisionAnchors(t *testing.T) {
+	t.Parallel()
+
+	anchor, err := NewAnchor(entry.SeqFromUint64(3), "owner-a", Anchor{
+		State: MemoryState{Decisions: []string{"durable"}},
+		SeqS:  entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(3),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unrelated := anchor
+	unrelated.Seq = entry.SeqFromUint64(4)
+	unrelated.Ek = "anchor:other"
+	store, err := NewStorage(finderStore{anchors: []entry.EntryLike{anchor, unrelated}}, &view.EntryView{}, Config{
+		Decider: fixedAnchorDecider(false), Summarizer: fixedSummarizer{Decisions: []string{"unused"}},
+		Classifier: &fakeClassifier{},
+		OnError:    func(err error) { t.Errorf("checkpoint failed: %v", err) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := store.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertAnchors := func(want int) {
+		t.Helper()
+		snapshot, err := store.snapshot(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(snapshot.Anchors) != want || snapshot.Anchors[0].Seq != anchor.Seq {
+			t.Fatalf("snapshot = %#v, want %d decision anchors", snapshot, want)
+		}
+	}
+	assertAnchors(1)
+	if _, err := store.Store(ctx, unrelated); err != nil {
+		t.Fatal(err)
+	}
+	assertAnchors(1)
+	if _, err := store.Store(ctx, anchor.WithID(entry.SeqFromUint64(5))); err != nil {
+		t.Fatal(err)
+	}
+	assertAnchors(2)
 }
