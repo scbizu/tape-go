@@ -1,5 +1,26 @@
 # Arbitrary-Precision Seq Migration
 
+## Design diagram
+
+```mermaid
+flowchart TD
+    Input["Canonical unsigned decimal string"] --> Codec["Seq codec: parse and validate"]
+    Codec --> Seq["Immutable, comparable entry.Seq"]
+    Seq --> Zero["Zero: unassigned sentinel"]
+    Seq --> Numeric["Cmp: numeric order; Next: successor without wrapping"]
+    Numeric --> Range["Half-open ranges: SeqS inclusive, SeqE exclusive"]
+    Seq --> JSON["JSON and JSONL: decimal strings"]
+    Seq --> Key["bbolt key: version marker + magnitude length + magnitude"]
+    Key --> Ordered["Numerically ordered entry and anchor keys"]
+    Seq --> Commands["Command arguments use entry.Seq"]
+    Commands --> Schema["ADK schema describes decimal-string wire format"]
+    Records["A2A records in Tape order"] --> Versions["Per-task TaskVersion: Create = 1, then increment"]
+```
+
+Tape sequence values and A2A task versions remain separate domains. Legacy
+numeric JSON and eight-byte bbolt keys are unsupported; this format break
+requires new stores rather than an automatic data conversion.
+
 ## Invariants
 
 - `entry.Seq` is immutable and value-comparable.
