@@ -28,9 +28,24 @@ type Tape struct {
 
 	OwnerID string
 	View    view.EntryView
+	// Registry supplies handlers to OverView. Configure it before use.
+	Registry *view.Registry
 
 	readSeq entry.Seq
 	readBuf *bytes.Reader
+}
+
+// OverView loads scope through the configured storage and binds its handlers.
+// The caller's context, including its owner scope, is passed to Range unchanged.
+func (t *Tape) OverView(ctx context.Context, scope view.EntryRange) (view.OverView, error) {
+	if t == nil || t.TapeStorage == nil {
+		return view.OverView{}, errors.New("tape: nil storage")
+	}
+	v, err := t.Range(ctx, scope)
+	if err != nil {
+		return view.OverView{}, err
+	}
+	return view.NewOverView(v, t.Registry), nil
 }
 
 // Find searches through the outermost configured finder decorator. A tape
