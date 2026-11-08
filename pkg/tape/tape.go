@@ -35,17 +35,21 @@ type Tape struct {
 	readBuf *bytes.Reader
 }
 
-// OverView loads scope through the configured storage and binds its handlers.
+// OverView loads scopes in order through the configured storage and binds its handlers.
 // The caller's context, including its owner scope, is passed to Range unchanged.
-func (t *Tape) OverView(ctx context.Context, scope view.EntryRange) (view.OverView, error) {
+func (t *Tape) OverView(ctx context.Context, scopes ...view.EntryRange) (view.OverView, error) {
 	if t == nil || t.TapeStorage == nil {
 		return view.OverView{}, errors.New("tape: nil storage")
 	}
-	v, err := t.Range(ctx, scope)
-	if err != nil {
-		return view.OverView{}, err
+	views := make([]*view.EntryView, 0, len(scopes))
+	for _, scope := range scopes {
+		v, err := t.Range(ctx, scope)
+		if err != nil {
+			return view.OverView{}, err
+		}
+		views = append(views, &v)
 	}
-	return view.NewOverView(v, t.Registry), nil
+	return view.NewOverView(views, t.Registry), nil
 }
 
 // Find searches through the outermost configured finder decorator. A tape
