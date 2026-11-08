@@ -17,7 +17,7 @@ each view's metadata.
 
 ## Architecture and invariants
 
-1. **Passive view data vs. active OverView**: `view.EntryView` and `view.TapeView` remain lightweight, passive data structures. Behavioral operations are exposed via `view.OverView` (capital `V` denoting an active, bird's-eye capability extension over `View`) and resolved through `view.Registry`.
+1. **Passive view data vs. active OverView**: `view.EntryView` and `view.TapeView` remain lightweight, passive data structures. `view.OverView` holds an ordered collection of `EntryView` pointers and exposes behavioral operations over that collection, resolved through `view.Registry`.
 2. **Generic extension protocol**: `tape-go` specifies only the general dispatch mechanism (`Handler`, `Registry`, and `OverView.Handle`). It does not bind or hardcode domain-specific handler schemas (such as grant, lock, or summary payloads), leaving concrete implementations to downstream applications or extension packages.
 3. **Reuse existing storage**: This mechanism creates no databases, files, buckets, or persistent handler state. Any downstream handler persistence must reuse existing abstractions and explicitly configured storage; provisioning additional storage requires a separate, explicit instruction. Dispatch itself never appends domain metadata to the main tape sequence.
 4. **Stateless registry**: `view.Registry` is a stateless capability dispatcher; stateful or persistent logic is managed internally by individual handlers or external stores.
@@ -64,52 +64,64 @@ are exact, case-sensitive names and must remain stable. The registry lock covers
 only map access, never handler execution. Handler implementations are responsible
 for their own concurrency safety.
 
-`OverView` decorates `EntryView` with registered handlers:
+`OverView` binds an ordered collection of `EntryView` pointers to registered handlers:
 
 ```go
 type OverView struct {
-	EntryView
+	Views    []*EntryView
 	registry *Registry
 }
 
-func NewOverView(v EntryView, reg *Registry) OverView
+func NewOverView(views []*EntryView, reg *Registry) OverView
 
-// Handle executes action once against this view and any additional views.
-func (ov *OverView) Handle(ctx context.Context, action string, payload any, additional ...*EntryView) (any, error)
+// Handle executes action once against the views held by this OverView.
+func (ov *OverView) Handle(ctx context.Context, action string, payload any) (any, error)
 ```
 
 `Handle` returns an error for a missing registry or unknown action. Otherwise it
-passes the context and payload unchanged to the handler with an ordered slice
-containing `&ov.EntryView` followed by `additional`. View pointers and their
-order are preserved; dispatch does not merge, sort, deduplicate, or copy entry
-data. The handler runs once for the entire collection, and its result and error
-are returned unchanged. `NewOverView` keeps the provided registry pointer and
-wraps the entry data without deep copying it.
-Handlers and callers must coordinate any mutations to shared view data.
+passes `ov.Views`, the context and payload unchanged to the handler. The handler
+runs once for the entire collection, and its result and error are returned
+unchanged. The collection belongs to `OverView`; action execution does not accept
+additional views. There is no distinguished primary view or combined range.
+`NewOverView` retains the provided slice and registry pointer without copying
+view or entry data. Callers and handlers must coordinate mutations to shared
+data. The handler determines which combinations of views its operation accepts,
+including whether an empty collection is valid.
 
-Existing calls to `ov.Handle(ctx, action, payload)` still dispatch a single view.
-To operate on multiple views, use
-`ov.Handle(ctx, action, payload, &other.EntryView)` or pass a slice with `views...`.
-Handler implementations from `v0.2.0-anra.4` must change their `*EntryView`
-parameter to `[]*EntryView`; this is an interface change. A single-view handler
-can check the slice length and use `views[0]`. Direct calls to a resolved handler
-also pass a slice. The handler determines which combinations of views its
-operation accepts.
+For a manually assembled collection:
+
+```go
+ov := view.NewOverView([]*view.EntryView{&first, &second}, registry)
+result, err := ov.Handle(ctx, action, payload)
+```
+
+Compared with `v0.2.0-anra.4`, handler implementations must change their
+`*EntryView` parameter to `[]*EntryView`. Construction changes from
+`NewOverView(v, reg)` to `NewOverView([]*EntryView{&v}, reg)`. `OverView` no longer
+embeds one `EntryView`; callers access individual view metadata and entries via
+`ov.Views[i]`. The promoted `EntryView.MarshalJSON` method no longer applies;
+`OverView` uses the default struct JSON encoding. Calls to
+`ov.Handle(ctx, action, payload)` keep the same signature for single and multiple
+views. These are interface changes; no compatibility wrapper is introduced.
 
 `Tape` exposes a `Registry *view.Registry` field, configured before use, and
 provides a helper accessor:
 
 ```go
-func (t *Tape) OverView(ctx context.Context, scope view.EntryRange) (view.OverView, error)
+func (t *Tape) OverView(ctx context.Context, scopes ...view.EntryRange) (view.OverView, error)
 ```
 
-The helper continues to load one range per call through the existing storage
-`Range(ctx, scope)` and wraps its result with `view.NewOverView`. The caller
-supplies the owner scope through `ctx`, as
-with `Range` and `Find`; `OwnerID` does not replace that context. Nil storage
-returns an error, and range errors propagate unchanged. The helper does not
-alter `Tape.View` or the I/O read position. A nil registry permits loading the
-view, but dispatch then returns an error. No global registry is introduced.
+The helper calls the existing storage `Range(ctx, scope)` for each scope in
+caller order, then constructs one `OverView` containing all returned views.
+Ranges are not merged, sorted, or deduplicated. A single range remains a valid
+call; a slice of ranges can be passed using `scopes...`. With no ranges, the
+helper returns an empty collection without reading storage. The caller supplies
+the owner scope through `ctx`, as with `Range` and `Find`; `OwnerID` does not
+replace that context. Nil storage returns an error. A range error stops further
+reads and returns a zero `OverView` and the original error, without a partial
+collection. The helper does not alter `Tape.View` or the I/O read position. A nil
+registry permits loading the views, but dispatch then returns an error. No global
+registry is introduced.
 
 ## Design diagram
 
@@ -120,10 +132,10 @@ flowchart TD
         Storage["TapeStorage"]
         Tape --> Storage
         Tape -->|Registry field| Reg["view.Registry (RWMutex + handlers)"]
-        Tape -->|Range then NewOverView| OV["view.OverView"]
+        Tape -->|Range for each scope then NewOverView| OV["view.OverView"]
         OV --> Reg
-        OV --> EntryV["Own EntryView"]
-        OV -->|One invocation: own view then additional views| Handler
+        OV --> EntryV["Views: ordered []*EntryView"]
+        OV -->|One invocation over ov.Views| Handler
     end
 
     subgraph CoreContract["Core Extension Contract (pkg/tape/view)"]
@@ -136,7 +148,7 @@ flowchart TD
         Handler -.->|Implemented by| SummaryH["SummaryHandler"]
         Handler -.->|Implemented by| CropsH["CropsSidecarHandler"]
 
-        App["Downstream App"] -->|ov.Handle(ctx, action, req, additional...)| OV
+        App["Downstream App"] -->|Handle with action and payload| OV
         CropsH -.->|Optional, explicitly configured| ExistingStore["Existing storage.TapeStorage"]
     end
 ```

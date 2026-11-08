@@ -55,22 +55,22 @@ func (r *Registry) Lookup(action string) (Handler, bool) {
 	return h, ok
 }
 
-// OverView binds an EntryView to a handler registry.
+// OverView binds an ordered collection of EntryViews to a handler registry.
 type OverView struct {
-	EntryView
+	Views    []*EntryView
 	registry *Registry
 }
 
-// NewOverView wraps v without copying its entries. A nil registry is allowed;
-// Handle reports an error when no registry is configured.
-func NewOverView(v EntryView, reg *Registry) OverView {
-	return OverView{EntryView: v, registry: reg}
+// NewOverView wraps views without copying the slice or its entries.
+// A nil registry is allowed; Handle then reports an error.
+func NewOverView(views []*EntryView, reg *Registry) OverView {
+	return OverView{Views: views, registry: reg}
 }
 
-// Handle dispatches action once with this view followed by any additional views.
+// Handle dispatches action once over the views held by this OverView.
 // View pointers, their order, the caller's context and payload are preserved.
 // Handler execution does not hold the registry lock.
-func (ov *OverView) Handle(ctx context.Context, action string, payload any, additional ...*EntryView) (any, error) {
+func (ov *OverView) Handle(ctx context.Context, action string, payload any) (any, error) {
 	if ov.registry == nil {
 		return nil, errors.New("view: no handler registry")
 	}
@@ -78,8 +78,5 @@ func (ov *OverView) Handle(ctx context.Context, action string, payload any, addi
 	if !ok {
 		return nil, fmt.Errorf("view: handler %q not found", action)
 	}
-	views := make([]*EntryView, 1, 1+len(additional))
-	views[0] = &ov.EntryView
-	views = append(views, additional...)
-	return h.Handle(ctx, views, payload)
+	return h.Handle(ctx, ov.Views, payload)
 }
