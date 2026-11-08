@@ -7,12 +7,12 @@ import (
 	"sync"
 )
 
-// Handler defines an executable action bound to an EntryView.
+// Handler defines an executable action over an ordered collection of EntryViews.
 // Action must return a stable, non-empty identifier.
 // Implementations are responsible for their own concurrency safety.
 type Handler interface {
 	Action() string
-	Handle(ctx context.Context, v *EntryView, payload any) (any, error)
+	Handle(ctx context.Context, views []*EntryView, payload any) (any, error)
 }
 
 // Registry resolves handlers by action name. Its zero value is ready for use.
@@ -67,9 +67,10 @@ func NewOverView(v EntryView, reg *Registry) OverView {
 	return OverView{EntryView: v, registry: reg}
 }
 
-// Handle dispatches action with the caller's context, view and payload.
+// Handle dispatches action once with this view followed by any additional views.
+// View pointers, their order, the caller's context and payload are preserved.
 // Handler execution does not hold the registry lock.
-func (ov *OverView) Handle(ctx context.Context, action string, payload any) (any, error) {
+func (ov *OverView) Handle(ctx context.Context, action string, payload any, additional ...*EntryView) (any, error) {
 	if ov.registry == nil {
 		return nil, errors.New("view: no handler registry")
 	}
@@ -77,5 +78,8 @@ func (ov *OverView) Handle(ctx context.Context, action string, payload any) (any
 	if !ok {
 		return nil, fmt.Errorf("view: handler %q not found", action)
 	}
-	return h.Handle(ctx, &ov.EntryView, payload)
+	views := make([]*EntryView, 1, 1+len(additional))
+	views[0] = &ov.EntryView
+	views = append(views, additional...)
+	return h.Handle(ctx, views, payload)
 }

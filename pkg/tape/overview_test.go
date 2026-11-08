@@ -12,12 +12,12 @@ import (
 )
 
 type overviewHandler struct {
-	handle func(context.Context, *view.EntryView, any) (any, error)
+	handle func(context.Context, []*view.EntryView, any) (any, error)
 }
 
 func (*overviewHandler) Action() string { return "test" }
-func (h *overviewHandler) Handle(ctx context.Context, v *view.EntryView, payload any) (any, error) {
-	return h.handle(ctx, v, payload)
+func (h *overviewHandler) Handle(ctx context.Context, views []*view.EntryView, payload any) (any, error) {
+	return h.handle(ctx, views, payload)
 }
 
 func TestTapeOverView(t *testing.T) {
@@ -45,11 +45,11 @@ func TestTapeOverView(t *testing.T) {
 		t.Fatal("OverView changed the tape's read state")
 	}
 	payload := new(int)
-	if err := tape.Registry.Register(&overviewHandler{handle: func(gotCtx context.Context, v *view.EntryView, p any) (any, error) {
-		if gotCtx != ctx || v != &ov.EntryView || p != payload {
+	if err := tape.Registry.Register(&overviewHandler{handle: func(gotCtx context.Context, views []*view.EntryView, p any) (any, error) {
+		if gotCtx != ctx || len(views) != 1 || views[0] != &ov.EntryView || p != payload {
 			t.Fatal("handler arguments were not preserved")
 		}
-		return v.Raw[0].GetID(), nil
+		return views[0].Raw[0].GetID(), nil
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -101,5 +101,46 @@ func TestTapeOverViewRangeErrors(t *testing.T) {
 		if _, err := tape.OverView(context.Background(), view.EntryRange{}); err == nil {
 			t.Fatal("OverView accepted nil storage")
 		}
+	}
+}
+
+func TestTapeOverViewMultipleRanges(t *testing.T) {
+	tape := newMemoryTape(t, "owner-a", "session-a")
+	for _, payload := range []string{`"first"`, `"second"`, `"third"`} {
+		if _, err := tape.Write([]byte(payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := owner.WithOwnerId(context.Background(), "owner-a")
+	tape.Registry = view.NewRegistry()
+	first, err := tape.OverView(ctx, view.EntryRange{
+		SeqS: entry.SeqFromUint64(1), SeqE: entry.SeqFromUint64(2),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := tape.OverView(ctx, view.EntryRange{
+		SeqS: entry.SeqFromUint64(3), SeqE: entry.SeqFromUint64(4),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	if err := tape.Registry.Register(&overviewHandler{handle: func(_ context.Context, views []*view.EntryView, _ any) (any, error) {
+		calls++
+		if len(views) != 2 || views[0] != &first.EntryView || views[1] != &third.EntryView {
+			t.Fatal("handler did not receive both storage views in order")
+		}
+		for i, want := range []uint64{1, 3} {
+			if len(views[i].Raw) != 1 || views[i].Raw[0].GetID() != entry.SeqFromUint64(want) {
+				t.Fatalf("unexpected entries for view %d: %#v", i, views[i])
+			}
+		}
+		return len(views), nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := first.Handle(ctx, "test", nil, &third.EntryView); got != 2 || err != nil || calls != 1 {
+		t.Fatalf("Handle = %v, %v; calls = %d", got, err, calls)
 	}
 }

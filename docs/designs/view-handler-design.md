@@ -10,6 +10,11 @@ In `tape-go`, `view.EntryView` and `view.TapeView` are passive data representati
 
 Currently, `tape-go` lacks a standard view handler binding mechanism, forcing downstream consumers to build bespoke wrappers and duplicate view abstractions.
 
+One operation may need several disjoint entry ranges, such as summarizing
+selected portions of a tape together. A handler receives all selected views in
+one invocation so it can operate across ranges without filling gaps or losing
+each view's metadata.
+
 ## Architecture and invariants
 
 1. **Passive view data vs. active OverView**: `view.EntryView` and `view.TapeView` remain lightweight, passive data structures. Behavioral operations are exposed via `view.OverView` (capital `V` denoting an active, bird's-eye capability extension over `View`) and resolved through `view.Registry`.
@@ -27,13 +32,13 @@ package view
 
 import "context"
 
-// Handler defines an executable action bound to an EntryView.
+// Handler defines an executable action over an ordered collection of EntryViews.
 type Handler interface {
 	// Action returns the unique identifier for this handler.
 	Action() string
 
-	// Handle executes the handler operation against the provided EntryView.
-	Handle(ctx context.Context, v *EntryView, payload any) (any, error)
+	// Handle executes one operation against all provided views.
+	Handle(ctx context.Context, views []*EntryView, payload any) (any, error)
 }
 ```
 
@@ -69,15 +74,27 @@ type OverView struct {
 
 func NewOverView(v EntryView, reg *Registry) OverView
 
-// Handle executes the registered handler matching action against this view.
-func (ov *OverView) Handle(ctx context.Context, action string, payload any) (any, error)
+// Handle executes action once against this view and any additional views.
+func (ov *OverView) Handle(ctx context.Context, action string, payload any, additional ...*EntryView) (any, error)
 ```
 
 `Handle` returns an error for a missing registry or unknown action. Otherwise it
-passes the context and payload unchanged to the handler with `&ov.EntryView`,
-and returns the handler's result and error unchanged. `NewOverView` keeps the
-provided registry pointer and wraps the entry data without deep copying it.
+passes the context and payload unchanged to the handler with an ordered slice
+containing `&ov.EntryView` followed by `additional`. View pointers and their
+order are preserved; dispatch does not merge, sort, deduplicate, or copy entry
+data. The handler runs once for the entire collection, and its result and error
+are returned unchanged. `NewOverView` keeps the provided registry pointer and
+wraps the entry data without deep copying it.
 Handlers and callers must coordinate any mutations to shared view data.
+
+Existing calls to `ov.Handle(ctx, action, payload)` still dispatch a single view.
+To operate on multiple views, use
+`ov.Handle(ctx, action, payload, &other.EntryView)` or pass a slice with `views...`.
+Handler implementations from `v0.2.0-anra.4` must change their `*EntryView`
+parameter to `[]*EntryView`; this is an interface change. A single-view handler
+can check the slice length and use `views[0]`. Direct calls to a resolved handler
+also pass a slice. The handler determines which combinations of views its
+operation accepts.
 
 `Tape` exposes a `Registry *view.Registry` field, configured before use, and
 provides a helper accessor:
@@ -86,8 +103,9 @@ provides a helper accessor:
 func (t *Tape) OverView(ctx context.Context, scope view.EntryRange) (view.OverView, error)
 ```
 
-The helper calls the existing storage `Range(ctx, scope)` and wraps its result
-with `view.NewOverView`. The caller supplies the owner scope through `ctx`, as
+The helper continues to load one range per call through the existing storage
+`Range(ctx, scope)` and wraps its result with `view.NewOverView`. The caller
+supplies the owner scope through `ctx`, as
 with `Range` and `Find`; `OwnerID` does not replace that context. Nil storage
 returns an error, and range errors propagate unchanged. The helper does not
 alter `Tape.View` or the I/O read position. A nil registry permits loading the
@@ -104,11 +122,12 @@ flowchart TD
         Tape -->|Registry field| Reg["view.Registry (RWMutex + handlers)"]
         Tape -->|Range then NewOverView| OV["view.OverView"]
         OV --> Reg
-        OV --> EntryV["view.EntryView (Passive Data)"]
+        OV --> EntryV["Own EntryView"]
+        OV -->|One invocation: own view then additional views| Handler
     end
 
     subgraph CoreContract["Core Extension Contract (pkg/tape/view)"]
-        Reg --> Handler["view.Handler (Action / Handle)"]
+        Reg --> Handler["view.Handler (Handle receives []*EntryView)"]
     end
 
     subgraph Downstream["Downstream Implementations (e.g. Anra)"]
@@ -117,7 +136,7 @@ flowchart TD
         Handler -.->|Implemented by| SummaryH["SummaryHandler"]
         Handler -.->|Implemented by| CropsH["CropsSidecarHandler"]
 
-        App["Downstream App"] -->|ov.Handle(ctx, action, req)| OV
+        App["Downstream App"] -->|ov.Handle(ctx, action, req, additional...)| OV
         CropsH -.->|Optional, explicitly configured| ExistingStore["Existing storage.TapeStorage"]
     end
 ```
