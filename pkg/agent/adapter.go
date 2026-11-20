@@ -187,7 +187,22 @@ func (a *TapeAdapter) SearchMemory(ctx context.Context, req *memory.SearchReques
 }
 
 // ContextWindow replaces ADK's model contents with the Tape's active view.
+// A context from WithSteerInbox also enables delivery at safe model steps.
 func (a *TapeAdapter) ContextWindow(ctx adkagent.CallbackContext, req *model.LLMRequest) (*model.LLMResponse, error) {
+	run := steerRunFromContext(ctx)
+	var history []steerDelivery
+	if run != nil {
+		run.mu.Lock()
+		defer run.mu.Unlock()
+		if !run.options.PersistToTape {
+			history = run.delivered
+			start := a.Tape.View.Scope.SeqS
+			for len(history) > 0 && history[0].after.Next().Cmp(start) < 0 {
+				history = history[1:]
+			}
+		}
+	}
+
 	tapeView, err := a.Tape.Get(a.tapeContext(ctx))
 	if err != nil {
 		return nil, err
@@ -196,8 +211,12 @@ func (a *TapeAdapter) ContextWindow(ctx adkagent.CallbackContext, req *model.LLM
 	if err != nil {
 		return nil, err
 	}
-	contents := make([]*genai.Content, 0, len(entries))
+	contents := make([]*genai.Content, 0, len(entries)+len(history))
 	for _, tapeEntry := range entries {
+		for len(history) > 0 && history[0].after.Cmp(tapeEntry.GetID()) < 0 {
+			contents = append(contents, steerContent(history[0].message))
+			history = history[1:]
+		}
 		if tapeEntry.GetKind().IsAnchor() {
 			continue
 		}
@@ -207,6 +226,15 @@ func (a *TapeAdapter) ContextWindow(ctx adkagent.CallbackContext, req *model.LLM
 		}
 		if event.Content != nil {
 			contents = append(contents, event.Content)
+		}
+	}
+	for _, delivery := range history {
+		contents = append(contents, steerContent(delivery.message))
+	}
+	if run != nil && !hasUnmatchedFunctionCalls(contents) {
+		contents, err = a.deliverSteer(ctx, run, tapeView.Scope.SeqE, contents)
+		if err != nil {
+			return nil, err
 		}
 	}
 	req.Contents = contents
