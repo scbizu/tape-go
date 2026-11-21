@@ -478,16 +478,16 @@ func TestJSONLRangeAcrossSparseIndexes(t *testing.T) {
 		{
 			path: "/tapes/owner-a/session-a/1.jsonl",
 			entries: []entry.Entry{
-				entry.NewEntry(entry.WithEntryID(seq(3))),
-				entry.NewEntry(entry.WithEntryID(seq(5))),
+				entry.NewEntry(entry.WithEntryID(seq(7))),
+				entry.NewEntry(entry.WithEntryID(seq(8))),
+				entry.NewEntry(entry.WithEntryID(seq(10))),
 			},
 		},
 		{
 			path: "/tapes/owner-a/session-a/2.jsonl",
 			entries: []entry.Entry{
-				entry.NewEntry(entry.WithEntryID(seq(7))),
-				entry.NewEntry(entry.WithEntryID(seq(8))),
-				entry.NewEntry(entry.WithEntryID(seq(10))),
+				entry.NewEntry(entry.WithEntryID(seq(3))),
+				entry.NewEntry(entry.WithEntryID(seq(5))),
 			},
 		},
 	}

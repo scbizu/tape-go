@@ -187,7 +187,14 @@ func (a *TapeAdapter) SearchMemory(ctx context.Context, req *memory.SearchReques
 }
 
 // ContextWindow replaces ADK's model contents with the Tape's active view.
+// A context from WithSteerInbox also enables delivery at safe model steps.
 func (a *TapeAdapter) ContextWindow(ctx adkagent.CallbackContext, req *model.LLMRequest) (*model.LLMResponse, error) {
+	run := steerRunFromContext(ctx)
+	if run != nil {
+		run.mu.Lock()
+		defer run.mu.Unlock()
+	}
+
 	tapeView, err := a.Tape.Get(a.tapeContext(ctx))
 	if err != nil {
 		return nil, err
@@ -207,6 +214,12 @@ func (a *TapeAdapter) ContextWindow(ctx adkagent.CallbackContext, req *model.LLM
 		}
 		if event.Content != nil {
 			contents = append(contents, event.Content)
+		}
+	}
+	if run != nil {
+		contents, err = a.deliverSteer(ctx, run, contents)
+		if err != nil {
+			return nil, err
 		}
 	}
 	req.Contents = contents
