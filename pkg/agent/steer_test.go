@@ -21,7 +21,6 @@ import (
 	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/runner"
-	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 	"google.golang.org/genai"
@@ -90,8 +89,12 @@ func TestSteerWithADKRunner(t *testing.T) {
 					}
 					return toolCalls("after")
 				case 3:
-					if !slices.Equal(positions, []int{steerIndex}) {
-						t.Fatalf("steer at %v, want once at %d", positions, steerIndex)
+					var want []int
+					if persist {
+						want = []int{steerIndex}
+					}
+					if !slices.Equal(positions, want) {
+						t.Fatalf("steer at %v, want %v", positions, want)
 					}
 					return genai.NewContentFromText("redirected", genai.RoleModel)
 				default:
@@ -148,30 +151,12 @@ func TestSteerWithADKRunner(t *testing.T) {
 	}
 }
 
-func TestSteerWaitsForMatchingToolResultsAndRetriesWithoutAck(t *testing.T) {
+func TestSteerRetriesWithoutAck(t *testing.T) {
 	adapter, inbox := newSteerFixture(t)
 	ctx := t.Context()
 	id, err := inbox.Enqueue(ctx, "redirect")
 	if err != nil {
 		t.Fatal(err)
-	}
-	current, err := adapter.Get(ctx, &session.GetRequest{AppName: adapter.AppName, UserID: adapter.Tape.OwnerID, SessionID: "session"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	appendContent := func(content *genai.Content) {
-		t.Helper()
-		e := session.NewEvent("invocation")
-		e.Author = "steer_test"
-		e.Content = content
-		if err := adapter.AppendEvent(ctx, current.Session, e); err != nil {
-			t.Fatal(err)
-		}
-	}
-	respond := func(id string) {
-		appendContent(&genai.Content{Role: genai.RoleUser, Parts: []*genai.Part{
-			{FunctionResponse: &genai.FunctionResponse{ID: id, Name: "work"}},
-		}})
 	}
 	checkWindow := func(ctx context.Context, want bool) {
 		t.Helper()
@@ -186,16 +171,8 @@ func TestSteerWaitsForMatchingToolResultsAndRetriesWithoutAck(t *testing.T) {
 	}
 
 	runCtx, first := WithSteerInbox(ctx, inbox, SteerOptions{})
-	appendContent(toolCalls("one", "two"))
-	checkWindow(runCtx, false)
-	respond("one")
-	checkWindow(runCtx, false)
-	if len(first.Delivered()) != 0 {
-		t.Fatalf("delivered before the tool batch closed: %v", first.Delivered())
-	}
-	respond("two")
 	checkWindow(runCtx, true)
-	checkWindow(runCtx, true)
+	checkWindow(runCtx, false)
 	if !slices.Equal(first.Delivered(), []entry.Seq{id}) {
 		t.Fatalf("first run delivered = %v, want %s", first.Delivered(), id)
 	}

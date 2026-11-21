@@ -16,6 +16,7 @@ var ErrNoAnchor = errors.New("storage: no anchor")
 type EntryStorage interface {
 	// Store reports the entry as persisted, including its assigned ID.
 	Store(context.Context, entry.EntryLike) (entry.EntryLike, error)
+	// Range returns entries in ascending entry ID order.
 	Range(context.Context, view.EntryRange, ...RangeBy) (view.EntryView, error)
 }
 

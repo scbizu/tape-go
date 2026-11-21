@@ -1,7 +1,7 @@
 package steer_test
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -15,6 +15,7 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	"github.com/scbizu/tape-go/pkg/tape/storage/jsonl"
+	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
 func TestInboxReplay(t *testing.T) {
@@ -46,10 +47,11 @@ func TestInboxReplay(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			for _, id := range []entry.Seq{{}, second.Next(), entry.SeqFromUint64(500)} {
-				if err := inbox.Ack(ctx, id); !errors.Is(err, steer.ErrUnknownID) {
-					t.Fatalf("Ack(%s) = %v, want ErrUnknownID", id, err)
-				}
+			if err := inbox.Ack(ctx, entry.Seq{}); err == nil {
+				t.Fatal("Ack accepted a zero ID")
+			}
+			if err := inbox.Ack(ctx, entry.SeqFromUint64(500)); err != nil {
+				t.Fatalf("Ack of an unknown nonzero ID: %v", err)
 			}
 			if head, err := store.Get(mainCtx); err != nil || !head.Scope.SeqE.IsZero() {
 				t.Fatalf("main tape head = %v, err = %v", head, err)
@@ -108,6 +110,69 @@ func TestInboxConcurrentEnqueuePendingAndAck(t *testing.T) {
 			checkPending(t, inbox, unacked...)
 		})
 	}
+}
+
+func TestInboxProjectsOnlyNewTail(t *testing.T) {
+	ctx := t.Context()
+	store := &rangeRecordingStorage{TapeStorage: openTape(t, "bbolt", t.TempDir())}
+	reader := bindInbox(t, store, "inbox")
+	writer, err := steer.NewInbox(store, "inbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkPending(t, reader)
+	if len(store.ranges) != 0 {
+		t.Fatalf("ranges for empty inbox = %v", store.ranges)
+	}
+
+	// Acknowledging an ID before it is enqueued leaves the later message pending
+	// on both incremental reads and full replay.
+	if err := writer.Ack(ctx, entry.SeqFromUint64(2)); err != nil {
+		t.Fatal(err)
+	}
+	checkPending(t, reader)
+	id, err := writer.Enqueue(ctx, "message")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := steer.Message{ID: id, Text: "message"}
+	pending, err := reader.Pending(ctx)
+	if err != nil || !slices.Equal(pending, []steer.Message{want}) {
+		t.Fatalf("Pending = %v, %v, want %v", pending, err, want)
+	}
+	pending[0].Text = "changed by caller"
+	checkPending(t, reader, want)
+	checkPending(t, writer, want)
+	if err := writer.Ack(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	wantRanges := []view.EntryRange{
+		{SeqS: entry.SeqFromUint64(1), SeqE: id},
+		{SeqS: id, SeqE: id.Next()},
+		{SeqS: entry.SeqFromUint64(1), SeqE: id.Next()},
+	}
+	if !slices.Equal(store.ranges, wantRanges) {
+		t.Fatalf("ranges before projecting Ack = %v, want %v", store.ranges, wantRanges)
+	}
+	checkPending(t, writer)
+	checkPending(t, reader)
+	wantRanges = append(wantRanges,
+		view.EntryRange{SeqS: id.Next(), SeqE: id.Next().Next()},
+		view.EntryRange{SeqS: id.Next(), SeqE: id.Next().Next()},
+	)
+	if !slices.Equal(store.ranges, wantRanges) {
+		t.Fatalf("ranges = %v, want %v", store.ranges, wantRanges)
+	}
+}
+
+type rangeRecordingStorage struct {
+	storage.TapeStorage
+	ranges []view.EntryRange
+}
+
+func (s *rangeRecordingStorage) Range(ctx context.Context, scope view.EntryRange, opts ...storage.RangeBy) (view.EntryView, error) {
+	s.ranges = append(s.ranges, scope)
+	return s.TapeStorage.Range(ctx, scope, opts...)
 }
 
 func openTape(t *testing.T, backend, dir string) storage.TapeStorage {

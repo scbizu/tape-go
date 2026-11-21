@@ -16,7 +16,7 @@ import (
 // SteerOptions controls where delivered input is retained.
 type SteerOptions struct {
 	// PersistToTape appends delivered messages to the Main Tape as user entries.
-	// The default retains them in the model context for one invocation.
+	// The default adds each message to its first model request only.
 	PersistToTape bool
 }
 
@@ -25,12 +25,7 @@ type SteerRun struct {
 	inbox     *steer.Inbox
 	options   SteerOptions
 	mu        sync.RWMutex
-	delivered []steerDelivery
-}
-
-type steerDelivery struct {
-	message steer.Message
-	after   entry.Seq // Main Tape head at the transient message's insertion point.
+	delivered []entry.Seq
 }
 
 type steerRunKey struct{}
@@ -47,11 +42,7 @@ func WithSteerInbox(ctx context.Context, inbox *steer.Inbox, options SteerOption
 func (r *SteerRun) Delivered() []entry.Seq {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	ids := make([]entry.Seq, 0, len(r.delivered))
-	for _, delivery := range r.delivered {
-		ids = append(ids, delivery.message.ID)
-	}
-	return ids
+	return slices.Clone(r.delivered)
 }
 
 func steerRunFromContext(ctx context.Context) *SteerRun {
@@ -88,11 +79,11 @@ func (r *SteerRun) pending(ctx context.Context) ([]steer.Message, error) {
 		return nil, err
 	}
 	return slices.DeleteFunc(messages, func(m steer.Message) bool {
-		return slices.ContainsFunc(r.delivered, func(d steerDelivery) bool { return d.message.ID == m.ID })
+		return slices.Contains(r.delivered, m.ID)
 	}), nil
 }
 
-func (a *TapeAdapter) deliverSteer(ctx context.Context, run *SteerRun, after entry.Seq, contents []*genai.Content) ([]*genai.Content, error) {
+func (a *TapeAdapter) deliverSteer(ctx context.Context, run *SteerRun, contents []*genai.Content) ([]*genai.Content, error) {
 	pending, err := run.pending(ctx)
 	if err != nil {
 		return nil, err
@@ -108,42 +99,8 @@ func (a *TapeAdapter) deliverSteer(ctx context.Context, run *SteerRun, after ent
 				return nil, fmt.Errorf("agent: persist steer %s: %w", message.ID, err)
 			}
 		}
-		contents = append(contents, steerContent(message))
-		run.delivered = append(run.delivered, steerDelivery{message: message, after: after})
+		contents = append(contents, genai.NewContentFromText(message.Text, genai.RoleUser))
+		run.delivered = append(run.delivered, message.ID)
 	}
 	return contents, nil
-}
-
-func steerContent(m steer.Message) *genai.Content {
-	return genai.NewContentFromText(m.Text, genai.RoleUser)
-}
-
-func hasUnmatchedFunctionCalls(contents []*genai.Content) bool {
-	type functionKey struct{ id, name string }
-	key := func(id, name string) functionKey {
-		if id != "" {
-			return functionKey{id: id}
-		}
-		return functionKey{name: name}
-	}
-	calls := make(map[functionKey]int)
-	for _, content := range contents {
-		for _, part := range content.Parts {
-			if part == nil {
-				continue
-			}
-			if call := part.FunctionCall; call != nil {
-				calls[key(call.ID, call.Name)]++
-			}
-			if response := part.FunctionResponse; response != nil {
-				k := key(response.ID, response.Name)
-				if count := calls[k]; count <= 1 {
-					delete(calls, k)
-				} else {
-					calls[k] = count - 1
-				}
-			}
-		}
-	}
-	return len(calls) > 0
 }

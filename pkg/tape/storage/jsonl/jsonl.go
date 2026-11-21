@@ -375,6 +375,7 @@ func (j *JSONL) Range(
 		}
 		v.Raw = append(v.Raw, entries...)
 	}
+	slices.SortFunc(v.Raw, func(a, b entry.EntryLike) int { return a.GetID().Cmp(b.GetID()) })
 	return v, nil
 }
 
