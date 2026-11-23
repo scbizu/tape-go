@@ -3,13 +3,14 @@ package steer_test
 import (
 	"context"
 	"fmt"
-	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
 
 	"github.com/scbizu/tape-go/pkg/ext/steer"
+	"github.com/scbizu/tape-go/pkg/tape"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
@@ -18,17 +19,32 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
+const (
+	testOwnerID      = "u:alice"
+	mainSessionID    = "session"
+	sidecarSessionID = "session:steer"
+)
+
 func TestInboxReplay(t *testing.T) {
 	for _, backend := range []string{"bbolt", "jsonl"} {
 		t.Run(backend, func(t *testing.T) {
 			dir := t.TempDir()
 			ctx := t.Context()
-			store := openTape(t, backend, dir)
-			inbox := bindInbox(t, store, "inbox")
-			mainCtx := owner.WithOwnerId(ctx, "main")
-			if err := store.Init(mainCtx); err != nil {
+			tapeCtx := owner.WithOwnerId(ctx, testOwnerID)
+			main := openTape(t, backend, dir, mainSessionID)
+			mainEntry, err := main.Store(tapeCtx, entry.NewEntry(
+				entry.WithEntryKind(entry.EntryUser),
+				entry.WithEntryOwner(testOwnerID),
+				entry.WithEntryContent("main input"),
+			))
+			if err != nil {
 				t.Fatal(err)
 			}
+			// Use one open bbolt handle at a time for the shared database file.
+			if err := main.Close(); err != nil {
+				t.Fatal(err)
+			}
+			inbox := bindInbox(t, openTape(t, backend, dir, sidecarSessionID))
 			checkPending(t, inbox)
 			first, err := inbox.Enqueue(ctx, " first input ")
 			if err != nil {
@@ -53,21 +69,60 @@ func TestInboxReplay(t *testing.T) {
 			if err := inbox.Ack(ctx, entry.SeqFromUint64(500)); err != nil {
 				t.Fatalf("Ack of an unknown nonzero ID: %v", err)
 			}
-			if head, err := store.Get(mainCtx); err != nil || !head.Scope.SeqE.IsZero() {
-				t.Fatalf("main tape head = %v, err = %v", head, err)
+			if first != mainEntry.GetID() {
+				t.Fatalf("sidecar first Seq = %s, want independent sequence starting at %s", first, mainEntry.GetID())
 			}
-
-			if closer, ok := store.(io.Closer); ok {
-				if err := closer.Close(); err != nil {
-					t.Fatal(err)
+			if backend == "jsonl" {
+				for _, sessionID := range []string{mainSessionID, sidecarSessionID} {
+					files, err := filepath.Glob(filepath.Join(dir, testOwnerID, sessionID, "*.jsonl"))
+					if err != nil || len(files) != 1 {
+						t.Fatalf("JSONL files for %q = %v, %v", sessionID, files, err)
+					}
+					info, err := os.Stat(files[0])
+					if err != nil || info.Size() == 0 {
+						t.Fatalf("JSONL file for %q is empty or unreadable: %v", sessionID, err)
+					}
 				}
 			}
-			reopened := bindInbox(t, openTape(t, backend, dir), "inbox")
+			if err := inbox.Tape().Close(); err != nil {
+				t.Fatal(err)
+			}
+			reopened := bindInbox(t, openTape(t, backend, dir, sidecarSessionID))
 			checkPending(t, reopened, steer.Message{ID: second, Text: "second input"})
 			if err := reopened.Ack(ctx, second); err != nil {
 				t.Fatal(err)
 			}
 			checkPending(t, reopened)
+			head, err := reopened.Tape().Get(tapeCtx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			overview, err := reopened.Tape().OverView(tapeCtx, view.EntryRange{SeqS: first, SeqE: head.Scope.SeqE.Next()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			log := overview.Views[0]
+			if log.SessionId != sidecarSessionID || log.Owner != testOwnerID {
+				t.Fatalf("sidecar view session = %q, owner = %q", log.SessionId, log.Owner)
+			}
+			wantKinds := []entry.EntryKind{"steer:queued", "steer:queued", "steer:acked", "steer:acked", "steer:acked", "steer:acked"}
+			wantTexts := []string{" first input ", "second input", first.String(), first.String(), "500", second.String()}
+			if len(log.Raw) != len(wantKinds) {
+				t.Fatalf("sidecar log length = %d, want %d", len(log.Raw), len(wantKinds))
+			}
+			for i, e := range log.Raw {
+				if e.GetKind() != wantKinds[i] || e.GetSummary() != wantTexts[i] || e.GetOwner() != testOwnerID {
+					t.Errorf("sidecar record %d = %+v, want kind %q, text %q, owner %q", i, e, wantKinds[i], wantTexts[i], testOwnerID)
+				}
+			}
+			if err := reopened.Tape().Close(); err != nil {
+				t.Fatal(err)
+			}
+			main = openTape(t, backend, dir, mainSessionID)
+			entries, err := main.Range(tapeCtx, view.EntryRange{SeqS: first, SeqE: head.Scope.SeqE.Next()})
+			if err != nil || len(entries.Raw) != 1 || entries.Raw[0].GetSummary() != "main input" {
+				t.Fatalf("main tape records = %v, %v", entries.Raw, err)
+			}
 		})
 	}
 }
@@ -75,12 +130,9 @@ func TestInboxReplay(t *testing.T) {
 func TestInboxConcurrentEnqueuePendingAndAck(t *testing.T) {
 	for _, backend := range []string{"bbolt", "jsonl"} {
 		t.Run(backend, func(t *testing.T) {
-			store := openTape(t, backend, t.TempDir())
-			inbox := bindInbox(t, store, "inbox")
-			reader, err := steer.NewInbox(store, "inbox")
-			if err != nil {
-				t.Fatal(err)
-			}
+			sidecar := openTape(t, backend, t.TempDir(), sidecarSessionID)
+			inbox := bindInbox(t, sidecar)
+			reader := bindInbox(t, sidecar)
 			const count = 24
 			var wg sync.WaitGroup
 			unacked := make([]steer.Message, count/2)
@@ -114,12 +166,11 @@ func TestInboxConcurrentEnqueuePendingAndAck(t *testing.T) {
 
 func TestInboxProjectsOnlyNewTail(t *testing.T) {
 	ctx := t.Context()
-	store := &rangeRecordingStorage{TapeStorage: openTape(t, "bbolt", t.TempDir())}
-	reader := bindInbox(t, store, "inbox")
-	writer, err := steer.NewInbox(store, "inbox")
-	if err != nil {
-		t.Fatal(err)
-	}
+	sidecar := openTape(t, "bbolt", t.TempDir(), sidecarSessionID)
+	store := &rangeRecordingStorage{TapeStorage: sidecar.TapeStorage}
+	sidecar.TapeStorage = store
+	reader := bindInbox(t, sidecar)
+	writer := bindInbox(t, sidecar)
 	checkPending(t, reader)
 	if len(store.ranges) != 0 {
 		t.Fatalf("ranges for empty inbox = %v", store.ranges)
@@ -175,35 +226,40 @@ func (s *rangeRecordingStorage) Range(ctx context.Context, scope view.EntryRange
 	return s.TapeStorage.Range(ctx, scope, opts...)
 }
 
-func openTape(t *testing.T, backend, dir string) storage.TapeStorage {
+func openTape(t *testing.T, backend, dir, sessionID string) *tape.Tape {
 	t.Helper()
+	var store storage.TapeStorage
+	var err error
 	if backend == "jsonl" {
-		store, err := jsonl.NewJSONLStorage("session", dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return store
+		store, err = jsonl.NewJSONLStorage(sessionID, dir)
+	} else {
+		store, err = bbolt.NewBboltStorage(sessionID, filepath.Join(dir, "tape.db"))
 	}
-	store, err := bbolt.NewBboltStorage("session", filepath.Join(dir, "tape.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	tp := &tape.Tape{TapeStorage: store, OwnerID: testOwnerID}
 	t.Cleanup(func() {
-		if err := store.Close(); err != nil {
-			t.Error(err)
+		if closer, ok := store.(*bbolt.Bbolt); ok {
+			if err := closer.Close(); err != nil {
+				t.Error(err)
+			}
 		}
 	})
-	return store
-}
-
-func bindInbox(t *testing.T, store storage.TapeStorage, ownerID string) *steer.Inbox {
-	t.Helper()
-	if err := store.Init(owner.WithOwnerId(t.Context(), ownerID)); err != nil {
+	if err := tp.Init(owner.WithOwnerId(t.Context(), tp.OwnerID)); err != nil {
 		t.Fatal(err)
 	}
-	inbox, err := steer.NewInbox(store, ownerID)
+	return tp
+}
+
+func bindInbox(t *testing.T, tp *tape.Tape) *steer.Inbox {
+	t.Helper()
+	inbox, err := steer.NewInbox(tp)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if inbox.Tape() != tp {
+		t.Fatal("Inbox did not retain the caller's Sidecar Tape")
 	}
 	return inbox
 }
