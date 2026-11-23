@@ -217,7 +217,11 @@ func (a *TapeAdapter) ContextWindow(ctx adkagent.CallbackContext, req *model.LLM
 		}
 	}
 	if run != nil {
-		contents, err = a.deliverSteer(ctx, run, contents)
+		contents, err = a.deliverSteer(ctx, steerDeliveryOptions{
+			run:           run,
+			mainSessionID: tapeView.SessionID,
+			contents:      contents,
+		})
 		if err != nil {
 			return nil, err
 		}

@@ -1,4 +1,4 @@
-// Package steer provides a persistent inbox backed by an existing Tape.
+// Package steer provides a persistent inbox backed by a Sidecar Tape.
 package steer
 
 import (
@@ -9,9 +9,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/scbizu/tape-go/pkg/tape"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
-	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
@@ -29,22 +29,24 @@ type Message struct {
 // Inbox stores enqueue and acknowledgement records on a caller-supplied Tape.
 // Enqueue, Pending and Ack can be called concurrently.
 type Inbox struct {
-	store   storage.TapeStorage
-	ownerID string
+	sidecar *tape.Tape
 
 	mu      sync.Mutex
 	head    entry.Seq
 	pending []Message
 }
 
-// NewInbox binds an initialized Tape owner and session. Use a scope independent
-// of the Main Tape and share the storage handle with other concurrent writers.
-func NewInbox(store storage.TapeStorage, ownerID string) (*Inbox, error) {
-	if store == nil || ownerID == "" {
-		return nil, errors.New("steer: storage and owner ID are required")
+// NewInbox binds an initialized Tape with its own session and the Main Tape's
+// owner. The caller manages the Sidecar Tape's lifecycle.
+func NewInbox(sidecar *tape.Tape) (*Inbox, error) {
+	if sidecar == nil || sidecar.OwnerID == "" {
+		return nil, errors.New("steer: sidecar tape with an owner ID is required")
 	}
-	return &Inbox{store: store, ownerID: ownerID}, nil
+	return &Inbox{sidecar: sidecar}, nil
 }
+
+// Tape returns the Inbox's Sidecar Tape.
+func (i *Inbox) Tape() *tape.Tape { return i.sidecar }
 
 // Enqueue durably appends text and returns its assigned message ID.
 func (i *Inbox) Enqueue(ctx context.Context, text string) (entry.Seq, error) {
@@ -63,8 +65,8 @@ func (i *Inbox) Pending(ctx context.Context) ([]Message, error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
-	ctx = owner.WithOwnerId(ctx, i.ownerID)
-	tapeView, err := i.store.Get(ctx)
+	ctx = owner.WithOwnerId(ctx, i.sidecar.OwnerID)
+	tapeView, err := i.sidecar.Get(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("steer: read inbox head: %w", err)
 	}
@@ -76,7 +78,7 @@ func (i *Inbox) Pending(ctx context.Context) ([]Message, error) {
 		return slices.Clone(i.pending), nil
 	}
 
-	entries, err := i.store.Range(ctx, view.EntryRange{
+	entries, err := i.sidecar.Range(ctx, view.EntryRange{
 		SeqS: i.head.Next(),
 		SeqE: head.Next(),
 	})
@@ -118,9 +120,10 @@ func (i *Inbox) Ack(ctx context.Context, id entry.Seq) error {
 }
 
 func (i *Inbox) append(ctx context.Context, kind entry.EntryKind, text string) (entry.EntryLike, error) {
-	stored, err := i.store.Store(owner.WithOwnerId(ctx, i.ownerID), entry.NewEntry(
+	ownerID := i.sidecar.OwnerID
+	stored, err := i.sidecar.Store(owner.WithOwnerId(ctx, ownerID), entry.NewEntry(
 		entry.WithEntryKind(kind),
-		entry.WithEntryOwner(i.ownerID),
+		entry.WithEntryOwner(ownerID),
 		entry.WithEntryContent(text),
 	))
 	if err != nil {
